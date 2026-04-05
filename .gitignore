@@ -1,0 +1,4 @@
+__pycache__/
+*.py[cod]
+.analyze_app.sqlite3
+.analyze_repos/
