@@ -5,6 +5,7 @@ from datetime import datetime
 from pathlib import Path
 
 from analyze_app.domain.entities import Commit, FileChange
+from analyze_app.shared.process import decode_output
 
 
 class GitBackend:
@@ -54,5 +55,9 @@ class GitBackend:
 
     def _git(self, args: list[str], cwd: Path) -> str:
         command = ["git", *args]
-        completed = subprocess.run(command, cwd=cwd, text=True, capture_output=True, check=True)
-        return completed.stdout.strip()
+        completed = subprocess.run(command, cwd=cwd, text=False, capture_output=True)
+        stdout = decode_output(completed.stdout)
+        stderr = decode_output(completed.stderr)
+        if completed.returncode != 0:
+            raise subprocess.CalledProcessError(completed.returncode, command, output=stdout, stderr=stderr)
+        return stdout.strip()
