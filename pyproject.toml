@@ -1,0 +1,15 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "analyze-app"
+version = "0.1.0"
+description = "AnalyzeApp MVP tooling"
+requires-python = ">=3.10"
+dependencies = [
+  "ollama>=0.4.0",
+]
+
+[project.scripts]
+analyze-app = "analyze_app.cli:main"
