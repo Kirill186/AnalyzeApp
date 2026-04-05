@@ -42,6 +42,9 @@ export ANALYZE_APP_OLLAMA_URL="http://127.0.0.1:11434/api/generate"
 python -m analyze_app.cli report 1 /path/to/repo <commit_hash>
 ```
 
+Если в кэше уже лежит старый отчёт (например, с моделью `llama3.1`), новый запуск автоматически пересчитает AI-summary при несовпадении модели или при старом `AI summary unavailable`.
+Также можно принудительно отключить кэш флагом `--no-cache`.
+
 ## Ограничения текущего этапа
 
 - UI-слой пока не добавлен (MVP начинается с бэкенд-ядра).

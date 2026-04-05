@@ -28,7 +28,7 @@ class CommitReportUseCase:
     def execute(self, repo_id: int, repo_path: Path, commit_hash: str, use_cache: bool = True) -> CommitReport:
         if use_cache:
             cached = self.store.load_commit_report(repo_id, commit_hash)
-            if cached:
+            if cached and self._is_cache_compatible(cached[9]) and not self._is_unavailable_summary(cached[8]):
                 return CommitReport(
                     commit_hash=commit_hash,
                     metrics=ChangeMetrics(files_changed=cached[2], lines_added=cached[3], lines_deleted=cached[4]),
@@ -56,3 +56,10 @@ class CommitReportUseCase:
         )
         self.store.save_commit_report(repo_id, report)
         return report
+
+    def _is_cache_compatible(self, cached_model_info: str) -> bool:
+        return cached_model_info.endswith(self.ai_backend.model)
+
+    @staticmethod
+    def _is_unavailable_summary(summary: str) -> bool:
+        return summary.strip().lower().startswith("ai summary unavailable")
