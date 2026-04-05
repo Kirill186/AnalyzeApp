@@ -1,0 +1,52 @@
+# AnalyzeApp MVP (Этап 1)
+
+Этот коммит запускает первый рабочий этап MVP по архитектуре из `docs/architecture_v2_ru.md`.
+
+## Что реализовано
+
+- Импорт репозитория (локальный путь или URL) и сохранение в SQLite.
+- Просмотр истории коммитов (`git log`).
+- Построение отчёта по коммиту:
+  - diff и базовые change metrics;
+  - запуск `ruff`;
+  - запуск `pytest`;
+  - AI-summary через Ollama.
+- Кэш отчётов коммитов в SQLite (`commit_reports`).
+
+## Запуск
+
+```bash
+python -m analyze_app.cli import /path/to/repo
+python -m analyze_app.cli commits /path/to/repo --limit 15
+python -m analyze_app.cli report 1 /path/to/repo <commit_hash>
+```
+
+## Настройка AI-summary (Ollama)
+
+По умолчанию используется модель `llama3.2:latest`.
+
+AI-summary сначала пробует локальный Python SDK `ollama` (как в вашем рабочем сценарии
+`python semantic_change_ollama.py ... --model llama3.2`), и только потом fallback на HTTP endpoint.
+
+Если видите ошибку вида `404`, обычно это значит, что модель не загружена в Ollama.
+
+```bash
+ollama pull llama3.2:latest
+```
+
+Переопределить модель и endpoint можно через переменные окружения:
+
+```bash
+export ANALYZE_APP_OLLAMA_MODEL="llama3.2:latest"
+export ANALYZE_APP_OLLAMA_URL="http://127.0.0.1:11434/api/generate"
+python -m analyze_app.cli report 1 /path/to/repo <commit_hash>
+```
+
+Если в кэше уже лежит старый отчёт (например, с моделью `llama3.1`), новый запуск автоматически пересчитает AI-summary при несовпадении модели или при старом `AI summary unavailable`.
+Также можно принудительно отключить кэш флагом `--no-cache`.
+
+## Ограничения текущего этапа
+
+- UI-слой пока не добавлен (MVP начинается с бэкенд-ядра).
+- Отчёт кэшируется агрегированно; детальные списки проблем и тестов хранятся только в runtime.
+- Для Windows вывод subprocess декодируется в несколько кодировок (`utf-8`, `cp1251`, `cp866`) для предотвращения `UnicodeDecodeError` при `git/ruff/pytest`.
