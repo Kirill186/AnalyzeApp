@@ -10,7 +10,7 @@
   - diff и базовые change metrics;
   - запуск `ruff`;
   - запуск `pytest`;
-  - AI-summary через Ollama API.
+  - AI-summary через Ollama.
 - Кэш отчётов коммитов в SQLite (`commit_reports`).
 
 ## Запуск
@@ -23,16 +23,22 @@ python -m analyze_app.cli report 1 /path/to/repo <commit_hash>
 
 ## Настройка AI-summary (Ollama)
 
-По умолчанию используется `http://localhost:11434/api/generate`.
+По умолчанию используется модель `llama3.2:latest`.
 
-Это означает, что для генерации AI-summary должен быть запущен локальный сервер Ollama на вашей машине
-(порт `11434`), иначе приложение вернёт fallback-сообщение вида `AI summary unavailable: ...`.
+AI-summary сначала пробует локальный Python SDK `ollama` (как в вашем рабочем сценарии
+`python semantic_change_ollama.py ... --model llama3.2`), и только потом fallback на HTTP endpoint.
 
-Можно переопределить адрес и модель через переменные окружения:
+Если видите ошибку вида `404`, обычно это значит, что модель не загружена в Ollama.
 
 ```bash
+ollama pull llama3.2:latest
+```
+
+Переопределить модель и endpoint можно через переменные окружения:
+
+```bash
+export ANALYZE_APP_OLLAMA_MODEL="llama3.2:latest"
 export ANALYZE_APP_OLLAMA_URL="http://127.0.0.1:11434/api/generate"
-export ANALYZE_APP_OLLAMA_MODEL="llama3.1"
 python -m analyze_app.cli report 1 /path/to/repo <commit_hash>
 ```
 
@@ -40,5 +46,4 @@ python -m analyze_app.cli report 1 /path/to/repo <commit_hash>
 
 - UI-слой пока не добавлен (MVP начинается с бэкенд-ядра).
 - Отчёт кэшируется агрегированно; детальные списки проблем и тестов хранятся только в runtime.
-
 - Для Windows вывод subprocess декодируется в несколько кодировок (`utf-8`, `cp1251`, `cp866`) для предотвращения `UnicodeDecodeError` при `git/ruff/pytest`.

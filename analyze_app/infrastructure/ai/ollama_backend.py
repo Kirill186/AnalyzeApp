@@ -17,6 +17,22 @@ class OllamaBackend:
             "что изменено, риски, рекомендации.\n\n"
             f"DIFF:\n{diff_text[:8000]}"
         )
+
+        # Основной путь: локальный SDK ollama (как в вашем рабочем скрипте).
+        try:
+            import ollama
+
+            response = ollama.generate(
+                model=self.model,
+                prompt=prompt,
+                options={"temperature": 0.1, "top_p": 0.9, "repeat_penalty": 1.1, "num_predict": 220},
+            )
+            text = response.get("response", "AI summary is unavailable")
+            return LLMResult(summary=text, model_info=f"ollama-sdk:{self.model}")
+        except Exception as exc:  # noqa: BLE001
+            sdk_error = self._humanize_error(exc)
+
+        # Fallback: HTTP API (на случай, если SDK не установлен).
         payload = {"model": self.model, "prompt": prompt, "stream": False}
         req = request.Request(
             self.endpoint,
@@ -28,6 +44,13 @@ class OllamaBackend:
             with request.urlopen(req, timeout=30) as response:
                 data = json.loads(response.read().decode("utf-8"))
                 text = data.get("response", "AI summary is unavailable")
+            return LLMResult(summary=text, model_info=f"ollama-http:{self.model}")
         except Exception as exc:  # noqa: BLE001
-            text = f"AI summary unavailable: {exc}"
-        return LLMResult(summary=text, model_info=f"ollama:{self.model}")
+            http_error = self._humanize_error(exc)
+            return LLMResult(summary=f"AI summary unavailable: {sdk_error}; {http_error}", model_info=f"ollama:{self.model}")
+
+    def _humanize_error(self, exc: Exception) -> str:
+        message = str(exc)
+        if "404" in message:
+            return f"model '{self.model}' not found in Ollama. Run: ollama pull {self.model}"
+        return message
