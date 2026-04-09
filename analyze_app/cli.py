@@ -90,6 +90,7 @@ def cmd_project_map(args: argparse.Namespace) -> None:
     if not hot_files:
         print("(не найдено .py файлов внутри указанного repo_path)")
         print(f"проверьте путь: {Path(args.repo_path).resolve()}")
+        print("если путь верный, перезапустите с --no-cache для принудительной пересборки карты")
 
 
 def cmd_commit_push(args: argparse.Namespace) -> None:

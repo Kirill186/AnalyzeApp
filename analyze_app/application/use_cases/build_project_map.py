@@ -17,7 +17,9 @@ class BuildProjectMapUseCase:
     def execute(self, repo_id: int, repo_path: Path, max_commits: int = 200, use_cache: bool = True) -> ProjectGraph:
         if use_cache:
             cached = self.store.load_project_map(repo_id)
-            if cached:
+            # Самовосстановление после старого бага: пустая карта могла закэшироваться
+            # для репозиториев внутри скрытых директорий (например, .analyze_repos).
+            if cached and cached.nodes:
                 return cached
 
         churn = self.git_backend.file_churn(repo_path, max_commits=max_commits)
