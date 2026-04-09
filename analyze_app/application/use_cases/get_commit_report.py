@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
-from analyze_app.domain.entities import ChangeMetrics, CommitReport, LLMResult, TestRunResult
+from analyze_app.domain.entities import ChangeMetrics, CommitReport, EvidenceBlock, LLMResult, TestRunResult
 from analyze_app.infrastructure.ai.ollama_backend import OllamaBackend
 from analyze_app.infrastructure.analysis.pytest_runner import PytestRunner
 from analyze_app.infrastructure.analysis.ruff_runner import RuffRunner
@@ -29,12 +30,14 @@ class CommitReportUseCase:
         if use_cache:
             cached = self.store.load_commit_report(repo_id, commit_hash)
             if cached and self._is_cache_compatible(cached[9]) and not self._is_unavailable_summary(cached[8]):
+                evidence_payload = json.loads(cached[10]) if len(cached) > 10 and cached[10] else []
+                evidence = [EvidenceBlock(file=item["file"], reason=item["reason"]) for item in evidence_payload]
                 return CommitReport(
                     commit_hash=commit_hash,
                     metrics=ChangeMetrics(files_changed=cached[2], lines_added=cached[3], lines_deleted=cached[4]),
                     issues=[],
                     tests=TestRunResult(total=cached[6], failed=cached[7], passed=max(cached[6] - cached[7], 0)),
-                    ai_summary=LLMResult(summary=cached[8], model_info=cached[9]),
+                    ai_summary=LLMResult(summary=cached[8], model_info=cached[9], evidence=evidence),
                 )
 
         diff_text = self.git_backend.read_commit_diff(repo_path, commit_hash)
