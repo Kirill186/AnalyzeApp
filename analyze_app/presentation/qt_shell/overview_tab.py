@@ -96,12 +96,11 @@ class OverviewTab(QWidget):
             card.threshold_label.setText(threshold)
 
     def load_readme(self, repo_path: Path) -> None:
-        for file_name in ["README.md", "readme.md", "README.rst", "README.txt"]:
-            candidate = repo_path / file_name
-            if not candidate.exists():
-                continue
+        candidates = _find_readme_candidates(repo_path)
+        if candidates:
+            candidate = candidates[0]
             content = candidate.read_text(encoding="utf-8", errors="ignore")
-            if candidate.suffix.lower() == ".md":
+            if candidate.suffix.lower() == ".md" or candidate.name.lower() == "readme":
                 self.readme_text.setHtml(_render_markdown(content))
             else:
                 self.readme_text.setPlainText(content)
@@ -125,3 +124,13 @@ def _render_markdown(content: str) -> str:
         )
     except Exception:  # noqa: BLE001
         return content
+
+
+def _find_readme_candidates(repo_path: Path) -> list[Path]:
+    if not repo_path.exists() or not repo_path.is_dir():
+        return []
+
+    files = [item for item in repo_path.iterdir() if item.is_file() and item.stem.lower() == "readme"]
+    preferred_suffix_order = {".md": 0, ".markdown": 1, ".rst": 2, ".txt": 3, "": 4}
+    files.sort(key=lambda path: preferred_suffix_order.get(path.suffix.lower(), 9))
+    return files
