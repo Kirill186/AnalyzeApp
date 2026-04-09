@@ -15,6 +15,8 @@ from analyze_app.domain.entities import (
     ProjectGraph,
     TestRunResult,
     WorkingTreeReport,
+    AIAuthorshipResult,
+    AIAuthorshipSignal,
 )
 
 
@@ -96,6 +98,23 @@ class SqliteStore:
                     status TEXT NOT NULL,
                     payload_json TEXT NOT NULL,
                     created_at TEXT DEFAULT CURRENT_TIMESTAMP
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS ai_authorship_cache (
+                    repo_id INTEGER NOT NULL,
+                    scope_key TEXT NOT NULL,
+                    scope TEXT NOT NULL,
+                    probability REAL NOT NULL,
+                    confidence REAL NOT NULL,
+                    top_signals_json TEXT NOT NULL,
+                    calibration_version TEXT NOT NULL,
+                    model_info TEXT NOT NULL,
+                    disclaimer TEXT NOT NULL,
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                    PRIMARY KEY (repo_id, scope_key)
                 )
                 """
             )
@@ -223,3 +242,54 @@ class SqliteStore:
                 """,
                 (job_type, job_key, status, json.dumps(payload)),
             )
+
+
+    def save_ai_authorship(self, repo_id: int, scope_key: str, result: AIAuthorshipResult) -> None:
+        signals_json = json.dumps([asdict(signal) for signal in result.top_signals])
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO ai_authorship_cache (
+                    repo_id, scope_key, scope, probability, confidence,
+                    top_signals_json, calibration_version, model_info, disclaimer
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    repo_id,
+                    scope_key,
+                    result.scope,
+                    result.probability,
+                    result.confidence,
+                    signals_json,
+                    result.calibration_version,
+                    result.model_info,
+                    result.disclaimer,
+                ),
+            )
+
+    def load_ai_authorship(self, repo_id: int, scope_key: str) -> AIAuthorshipResult | None:
+        with self._connect() as conn:
+            cursor = conn.execute(
+                """
+                SELECT scope, probability, confidence, top_signals_json,
+                       calibration_version, model_info, disclaimer
+                FROM ai_authorship_cache
+                WHERE repo_id = ? AND scope_key = ?
+                """,
+                (repo_id, scope_key),
+            )
+            row = cursor.fetchone()
+            if not row:
+                return None
+
+        signals_raw = json.loads(row[3]) if row[3] else []
+        signals = [AIAuthorshipSignal(**item) for item in signals_raw]
+        return AIAuthorshipResult(
+            scope=row[0],
+            probability=float(row[1]),
+            confidence=float(row[2]),
+            top_signals=signals,
+            calibration_version=row[4],
+            model_info=row[5],
+            disclaimer=row[6],
+        )

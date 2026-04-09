@@ -1,0 +1,6 @@
+{
+  "method": "platt",
+  "calibration_version": "platt-v1",
+  "a": 0.92,
+  "b": 0.03
+}

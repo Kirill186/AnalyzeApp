@@ -9,12 +9,14 @@ from analyze_app.application.use_cases.build_project_map import BuildProjectMapU
 from analyze_app.application.use_cases.commit_and_push import CommitAndPushUseCase
 from analyze_app.application.use_cases.get_commit_report import CommitReportUseCase
 from analyze_app.application.use_cases.get_working_tree_report import WorkingTreeReportUseCase
+from analyze_app.application.use_cases.detect_ai_authorship import DetectAIAuthorshipUseCase
 from analyze_app.application.use_cases.import_repository import ImportRepositoryUseCase
 from analyze_app.application.use_cases.list_commits import ListCommitsUseCase
 from analyze_app.infrastructure.ai.ollama_backend import OllamaBackend
 from analyze_app.infrastructure.analysis.map.ast_map_builder import AstMapBuilder
 from analyze_app.infrastructure.analysis.pytest_runner import PytestRunner
 from analyze_app.infrastructure.analysis.ruff_runner import RuffRunner
+from analyze_app.infrastructure.ai.authorship import FeatureExtractor, ModelRuntime, ProbabilityCalibrator
 from analyze_app.infrastructure.git.backend import GitBackend
 from analyze_app.infrastructure.storage.sqlite_store import SqliteStore
 from analyze_app.shared.config import DEFAULT_CONFIG
@@ -107,13 +109,51 @@ def cmd_commit_push(args: argparse.Namespace) -> None:
         print("push skipped")
 
 
+def _build_ai_authorship_use_case(git_backend: GitBackend, store: SqliteStore) -> DetectAIAuthorshipUseCase:
+    config = DEFAULT_CONFIG
+    return DetectAIAuthorshipUseCase(
+        git_backend=git_backend,
+        store=store,
+        extractor=FeatureExtractor(),
+        model_runtime=ModelRuntime(config.ai_authorship_model_path),
+        calibrator=ProbabilityCalibrator(config.ai_authorship_calibration_path),
+    )
+
+
+def cmd_ai_authorship(args: argparse.Namespace) -> None:
+    git_backend, store, *_ = _build_services(args.db)
+    use_case = _build_ai_authorship_use_case(git_backend, store)
+    result = use_case.execute(
+        repo_id=args.repo_id,
+        repo_path=Path(args.repo_path),
+        scope=args.scope,
+        commit_hash=args.commit_hash,
+        files=args.files,
+        use_cache=not args.no_cache,
+    )
+    print(f"scope: {result.scope}")
+    print(f"probability: {result.probability:.4f}")
+    print(f"confidence: {result.confidence:.4f}")
+    print(f"model: {result.model_info}")
+    print(f"calibration: {result.calibration_version}")
+    print("top_signals:")
+    for signal in result.top_signals:
+        print(
+            f"- {signal.name}: value={signal.value:.4f} weight={signal.weight:.4f} "
+            f"direction={signal.direction}"
+        )
+    print("disclaimer:")
+    print(result.disclaimer)
+
+
 def cmd_enqueue_jobs(args: argparse.Namespace) -> None:
     git_backend, store, ai_backend, ruff_runner, pytest_runner = _build_services(args.db)
     commit_report = CommitReportUseCase(git_backend, ruff_runner, pytest_runner, ai_backend, store)
     working_tree_report = WorkingTreeReportUseCase(git_backend, ruff_runner, pytest_runner, ai_backend, store)
     project_map = BuildProjectMapUseCase(git_backend, AstMapBuilder(), store)
 
-    orchestrator = AnalysisJobOrchestrator(commit_report, working_tree_report, project_map)
+    ai_authorship = _build_ai_authorship_use_case(git_backend, store)
+    orchestrator = AnalysisJobOrchestrator(commit_report, working_tree_report, project_map, ai_authorship)
     orchestrator.start()
     try:
         if args.commit_hash:
@@ -123,6 +163,13 @@ def cmd_enqueue_jobs(args: argparse.Namespace) -> None:
         print(f"working_tree_analysis enqueued={accepted}")
         accepted = orchestrator.enqueue_map_rebuild(args.repo_id, Path(args.repo_path))
         print(f"map_rebuild enqueued={accepted}")
+        accepted = orchestrator.enqueue_ai_authorship_infer(
+            args.repo_id,
+            Path(args.repo_path),
+            scope="commit" if args.commit_hash else "working_tree",
+            commit_hash=args.commit_hash,
+        )
+        print(f"ai_authorship_infer enqueued={accepted}")
         time.sleep(args.wait_sec)
     finally:
         orchestrator.stop()
@@ -169,6 +216,15 @@ def main() -> None:
     commit_push_parser.add_argument("--paths", nargs="*")
     commit_push_parser.add_argument("--no-push", action="store_true")
     commit_push_parser.set_defaults(func=cmd_commit_push)
+
+    authorship_parser = subparsers.add_parser("ai-authorship", help="Estimate probability of AI-generated code")
+    authorship_parser.add_argument("repo_id", type=int)
+    authorship_parser.add_argument("repo_path")
+    authorship_parser.add_argument("--scope", choices=["working_tree", "commit", "file"], default="working_tree")
+    authorship_parser.add_argument("--commit-hash")
+    authorship_parser.add_argument("--files", nargs="*")
+    authorship_parser.add_argument("--no-cache", action="store_true")
+    authorship_parser.set_defaults(func=cmd_ai_authorship)
 
     jobs_parser = subparsers.add_parser("enqueue-jobs", help="Run background analysis jobs")
     jobs_parser.add_argument("repo_id", type=int)

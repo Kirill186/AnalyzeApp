@@ -68,6 +68,23 @@ class GitBackend:
     def push_current_branch(self, repo_path: Path) -> None:
         self._git(["push"], repo_path)
 
+
+
+    def read_file_at_commit(self, repo_path: Path, commit_hash: str, file_path: str) -> str:
+        try:
+            return self._git(["show", f"{commit_hash}:{file_path}"], repo_path)
+        except subprocess.CalledProcessError:
+            return ""
+
+    def read_working_tree_file(self, repo_path: Path, file_path: str) -> str:
+        path = repo_path / file_path
+        if not path.exists() or not path.is_file():
+            return ""
+        try:
+            return path.read_text(encoding="utf-8")
+        except UnicodeDecodeError:
+            return path.read_text(encoding="utf-8", errors="ignore")
+
     def file_churn(self, repo_path: Path, max_commits: int = 200) -> dict[str, int]:
         output = self._git(["log", f"--max-count={max_commits}", "--numstat", "--format="], repo_path)
         churn: dict[str, int] = {}
