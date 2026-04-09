@@ -91,6 +91,6 @@ export ANALYZE_APP_AI_AUTHORSHIP_CALIBRATION_PATH="/path/to/calibration.json"
 
 ## Ограничения
 
-- UI-слой пока не добавлен; реализованы backend/CLI-компоненты. Детальная спецификация будущего интерфейса: `docs/ui_spec_v1_ru.md`.
+- Desktop UI реализует базовый каркас вкладок и workflows; часть визуализаций (commit graph webview) пока отображается в placeholder-режиме.
 - AIAuthorship является вероятностной эвристикой; не заменяет экспертную ревизию.
 - Фоновые задачи остаются in-process и single-worker.

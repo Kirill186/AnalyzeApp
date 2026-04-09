@@ -15,6 +15,23 @@ QWidget {
 QMenuBar, QMenu, QTabWidget::pane, QSplitter, QScrollArea, QListWidget, QTreeWidget {
     background: #121A2B;
 }
+QListWidget {
+    border: 1px solid #2A3755;
+    border-radius: 8px;
+    outline: none;
+}
+QGroupBox {
+    border: 1px solid #2A3755;
+    border-radius: 10px;
+    margin-top: 10px;
+    padding-top: 8px;
+}
+QGroupBox::title {
+    subcontrol-origin: margin;
+    left: 10px;
+    padding: 0 4px;
+    color: #9AA7C7;
+}
 QTabBar::tab {
     background: #1A2438;
     padding: 8px 14px;

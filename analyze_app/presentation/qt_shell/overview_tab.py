@@ -102,8 +102,26 @@ class OverviewTab(QWidget):
                 continue
             content = candidate.read_text(encoding="utf-8", errors="ignore")
             if candidate.suffix.lower() == ".md":
-                self.readme_text.setMarkdown(content)
+                self.readme_text.setHtml(_render_markdown(content))
             else:
                 self.readme_text.setPlainText(content)
             return
         self.readme_text.setMarkdown("README отсутствует")
+
+
+def _render_markdown(content: str) -> str:
+    try:
+        import markdown  # type: ignore
+
+        html = markdown.markdown(content, extensions=["fenced_code", "tables", "sane_lists"])
+        return (
+            "<style>"
+            "body{color:#E6ECFF;background:#121A2B;font-family:Segoe UI,Arial,sans-serif;line-height:1.5;}"
+            "a{color:#79A6FF;} pre{background:#1A2438;padding:10px;border-radius:8px;}"
+            "code{background:#1A2438;padding:2px 4px;border-radius:4px;}"
+            "table{border-collapse:collapse;} th,td{border:1px solid #2A3755;padding:6px;}"
+            "</style>"
+            f"<body>{html}</body>"
+        )
+    except Exception:  # noqa: BLE001
+        return content

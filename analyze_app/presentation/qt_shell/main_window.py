@@ -1,16 +1,18 @@
 from __future__ import annotations
 
-import subprocess
 import sys
+from dataclasses import dataclass
 from datetime import datetime
+import re
 from pathlib import Path
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QObject, QThread, Qt, Signal, Slot
 from PySide6.QtWidgets import (
     QApplication,
     QDialog,
     QMainWindow,
     QMessageBox,
+    QProgressDialog,
     QSplitter,
     QStatusBar,
 )
@@ -23,7 +25,9 @@ from analyze_app.application.use_cases.list_commits import ListCommitsUseCase
 from analyze_app.infrastructure.ai.ollama_backend import OllamaBackend
 from analyze_app.infrastructure.ai.project_overview_backend import ProjectOverviewBackend
 from analyze_app.infrastructure.analysis.map.ast_map_builder import AstMapBuilder
+from analyze_app.infrastructure.analysis.mypy_runner import MypyRunner
 from analyze_app.infrastructure.analysis.pytest_runner import PytestRunner
+from analyze_app.infrastructure.analysis.radon_runner import RadonRunner
 from analyze_app.infrastructure.analysis.ruff_runner import RuffRunner
 from analyze_app.infrastructure.git.backend import GitBackend
 from analyze_app.infrastructure.storage.sqlite_store import SqliteStore
@@ -34,6 +38,33 @@ from analyze_app.presentation.qt_shell.report_tabs import ReportTabs
 from analyze_app.presentation.qt_shell.state_store import RepoListItemVM, UiStateStore
 from analyze_app.presentation.qt_shell.theme import apply_theme
 from analyze_app.shared.config import DEFAULT_CONFIG
+
+
+@dataclass(slots=True)
+class ImportResult:
+    repo_id: int
+    repo_path: Path
+
+
+class ImportRepositoryWorker(QObject):
+    finished = Signal(object)
+    failed = Signal(str)
+
+    def __init__(self, source: str, git_backend: GitBackend, store: SqliteStore) -> None:
+        super().__init__()
+        self.source = source
+        self.git_backend = git_backend
+        self.store = store
+
+    @Slot()
+    def run(self) -> None:
+        use_case = ImportRepositoryUseCase(self.git_backend, self.store, DEFAULT_CONFIG.clone_root)
+        try:
+            repo_id, repo_path = use_case.execute(self.source)
+        except Exception as error:  # noqa: BLE001
+            self.failed.emit(str(error))
+            return
+        self.finished.emit(ImportResult(repo_id=repo_id, repo_path=repo_path))
 
 
 class MainWindow(QMainWindow):
@@ -52,6 +83,9 @@ class MainWindow(QMainWindow):
         self.tabs = ReportTabs()
         self.status = QStatusBar()
         self.setStatusBar(self.status)
+        self.import_progress: QProgressDialog | None = None
+        self.import_thread: QThread | None = None
+        self.import_worker: ImportRepositoryWorker | None = None
 
         splitter = QSplitter(Qt.Horizontal)
         splitter.addWidget(self.sidebar)
@@ -116,15 +150,55 @@ class MainWindow(QMainWindow):
         dialog = RepoAddDialog(self)
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
-        use_case = ImportRepositoryUseCase(self.git_backend, self.store, DEFAULT_CONFIG.clone_root)
-        try:
-            repo_id, repo_path = use_case.execute(dialog.source)
-        except (subprocess.CalledProcessError, ValueError) as error:
-            QMessageBox.critical(self, "Import failed", str(error))
+        self._start_repository_import(dialog.source)
+
+    def _start_repository_import(self, source: str) -> None:
+        if self.import_thread is not None and self.import_thread.isRunning():
+            QMessageBox.information(self, "Import in progress", "Дождитесь завершения текущего импорта.")
             return
-        self.status.showMessage(f"Repository imported: {repo_path} (id={repo_id})", 5_000)
+
+        self.import_progress = QProgressDialog("Импорт репозитория...", "", 0, 0, self)
+        self.import_progress.setWindowTitle("AnalyzeApp")
+        self.import_progress.setCancelButton(None)
+        self.import_progress.setMinimumDuration(0)
+        self.import_progress.setWindowModality(Qt.ApplicationModal)
+        self.import_progress.show()
+
+        self.import_thread = QThread(self)
+        self.import_worker = ImportRepositoryWorker(source=source, git_backend=self.git_backend, store=self.store)
+        self.import_worker.moveToThread(self.import_thread)
+
+        self.import_thread.started.connect(self.import_worker.run)
+        self.import_worker.finished.connect(self._on_import_finished)
+        self.import_worker.failed.connect(self._on_import_failed)
+        self.import_worker.finished.connect(self.import_thread.quit)
+        self.import_worker.failed.connect(self.import_thread.quit)
+        self.import_thread.finished.connect(self._cleanup_import_worker)
+        self.import_thread.start()
+
+    @Slot(object)
+    def _on_import_finished(self, result: ImportResult) -> None:
+        if self.import_progress:
+            self.import_progress.close()
+        self.status.showMessage(f"Repository imported: {result.repo_path} (id={result.repo_id})", 5_000)
         self._load_repositories()
-        self._on_repo_selected(repo_id)
+        self._on_repo_selected(result.repo_id)
+
+    @Slot(str)
+    def _on_import_failed(self, error: str) -> None:
+        if self.import_progress:
+            self.import_progress.close()
+        QMessageBox.critical(self, "Import failed", error)
+
+    @Slot()
+    def _cleanup_import_worker(self) -> None:
+        if self.import_worker:
+            self.import_worker.deleteLater()
+            self.import_worker = None
+        if self.import_thread:
+            self.import_thread.deleteLater()
+            self.import_thread = None
+        self.import_progress = None
 
     def _on_repo_selected(self, repo_id: int) -> None:
         repos = [repo for repo in self._current_repo_items() if repo.repo_id == repo_id]
@@ -177,8 +251,78 @@ class MainWindow(QMainWindow):
 
         summary = "Описание пока не сгенерировано. Нажмите Regenerate."
         self.tabs.overview_tab.update_project_info(self.current_repo.title, len(tracked_files), loc, summary)
-        self.tabs.overview_tab.update_metrics({})
+        self.tabs.overview_tab.update_metrics(self._calculate_quality_metrics(repo_path))
         self.tabs.overview_tab.load_readme(repo_path)
+
+    def _calculate_quality_metrics(self, repo_path: Path) -> dict[str, tuple[str, str, str]]:
+        metrics: dict[str, tuple[str, str, str]] = {
+            "duplication_proxy": ("—", "n/a", "будет добавлено в следующей итерации"),
+        }
+
+        ruff_issues = RuffRunner().run(repo_path)
+        lint_count = len(ruff_issues)
+        metrics["lint"] = (self._grade_lower_better(lint_count, [0, 10, 30, 60]), str(lint_count), "A=0, B<=10")
+
+        mypy_issues = MypyRunner().run(repo_path)
+        typing_count = len(mypy_issues)
+        metrics["typing_health"] = (
+            self._grade_lower_better(typing_count, [0, 5, 20, 50]),
+            str(typing_count),
+            "A=0, B<=5",
+        )
+
+        tests = PytestRunner().run(repo_path)
+        if tests.total > 0:
+            pass_rate = (tests.passed / tests.total) * 100
+            metrics["tests"] = (self._grade_upper_better(pass_rate, [95, 80, 60, 40]), f"{pass_rate:.1f}%", "A>=95%")
+        else:
+            metrics["tests"] = ("—", "n/a", "нет тестов")
+
+        radon_issues = RadonRunner().run(repo_path)
+        complexity_values = _extract_values(radon_issues, r"complexity\\s+([0-9]+(?:\\.[0-9]+)?)")
+        maintainability_values = _extract_values(radon_issues, r"Maintainability index is\\s+([0-9]+(?:\\.[0-9]+)?)")
+        if complexity_values:
+            avg_complexity = sum(complexity_values) / len(complexity_values)
+            metrics["complexity"] = (
+                self._grade_lower_better(avg_complexity, [6, 10, 15, 25]),
+                f"{avg_complexity:.1f}",
+                "A<6",
+            )
+        else:
+            metrics["complexity"] = ("—", "n/a", "нет данных radon")
+        if maintainability_values:
+            avg_mi = sum(maintainability_values) / len(maintainability_values)
+            metrics["maintainability"] = (
+                self._grade_upper_better(avg_mi, [90, 75, 60, 45]),
+                f"{avg_mi:.1f}",
+                "A>=90",
+            )
+        else:
+            metrics["maintainability"] = ("—", "n/a", "нет данных radon")
+
+        return metrics
+
+    def _grade_lower_better(self, value: float, thresholds: list[float]) -> str:
+        if value <= thresholds[0]:
+            return "A"
+        if value <= thresholds[1]:
+            return "B"
+        if value <= thresholds[2]:
+            return "C"
+        if value <= thresholds[3]:
+            return "D"
+        return "E"
+
+    def _grade_upper_better(self, value: float, thresholds: list[float]) -> str:
+        if value >= thresholds[0]:
+            return "A"
+        if value >= thresholds[1]:
+            return "B"
+        if value >= thresholds[2]:
+            return "C"
+        if value >= thresholds[3]:
+            return "D"
+        return "E"
 
     def _regenerate_overview(self) -> None:
         if not self.current_repo:
@@ -242,3 +386,17 @@ def run_desktop_app() -> None:
     window = MainWindow(store, GitBackend())
     window.show()
     app.exec()
+
+
+def _extract_values(issues: list, pattern: str) -> list[float]:
+    compiled = re.compile(pattern)
+    values: list[float] = []
+    for issue in issues:
+        match = compiled.search(issue.message)
+        if not match:
+            continue
+        try:
+            values.append(float(match.group(1)))
+        except ValueError:
+            continue
+    return values
