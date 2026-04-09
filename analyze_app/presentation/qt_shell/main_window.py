@@ -8,6 +8,7 @@ from pathlib import Path
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QApplication,
+    QDialog,
     QMainWindow,
     QMessageBox,
     QSplitter,
@@ -113,7 +114,7 @@ class MainWindow(QMainWindow):
 
     def _add_repository(self) -> None:
         dialog = RepoAddDialog(self)
-        if dialog.exec() != dialog.Accepted:
+        if dialog.exec() != QDialog.DialogCode.Accepted:
             return
         use_case = ImportRepositoryUseCase(self.git_backend, self.store, DEFAULT_CONFIG.clone_root)
         try:
@@ -123,6 +124,7 @@ class MainWindow(QMainWindow):
             return
         self.status.showMessage(f"Repository imported: {repo_path} (id={repo_id})", 5_000)
         self._load_repositories()
+        self._on_repo_selected(repo_id)
 
     def _on_repo_selected(self, repo_id: int) -> None:
         repos = [repo for repo in self._current_repo_items() if repo.repo_id == repo_id]

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from PySide6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
@@ -57,6 +59,18 @@ class RepoAddDialog(QDialog):
         if url and not (url.startswith("http://") or url.startswith("https://") or url.endswith(".git")):
             QMessageBox.warning(self, "Validation", "URL должен быть git-совместимым.")
             return
+        if path:
+            local_path = Path(path).expanduser().resolve()
+            if not local_path.exists() or not local_path.is_dir():
+                QMessageBox.warning(self, "Validation", "Local Path должен существовать и быть папкой.")
+                return
+            if not (local_path / ".git").exists():
+                QMessageBox.warning(
+                    self,
+                    "Validation",
+                    "Указанная папка не выглядит как git-репозиторий (.git не найден).",
+                )
+                return
         self.accept()
 
     @property
