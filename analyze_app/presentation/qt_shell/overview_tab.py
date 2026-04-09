@@ -43,6 +43,16 @@ class MetricCard(QFrame):
 class OverviewTab(QWidget):
     regenerate_requested = Signal()
 
+    METRICS_ORDER: list[tuple[str, str]] = [
+        ("lint", "Линт"),
+        ("typing_health", "Типы"),
+        ("tests", "Тесты"),
+        ("complexity", "Сложность"),
+        ("maintainability", "Поддержка"),
+        ("dead_code", "Мёртвый код"),
+        ("duplication", "Дубли"),
+    ]
+
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
 
@@ -54,10 +64,10 @@ class OverviewTab(QWidget):
         metrics_box = QGroupBox("Quality Metrics Grades")
         self.metrics_layout = QGridLayout(metrics_box)
         self.cards: dict[str, MetricCard] = {}
-        for idx, metric in enumerate(["complexity", "maintainability", "typing_health", "tests", "lint", "duplication_proxy"]):
-            card = MetricCard(metric)
+        for idx, (key, label) in enumerate(self.METRICS_ORDER):
+            card = MetricCard(label)
             self.metrics_layout.addWidget(card, idx // 3, idx % 3)
-            self.cards[metric] = card
+            self.cards[key] = card
 
         overview_header = QHBoxLayout()
         overview_header.addWidget(QLabel("Project Overview"))

@@ -16,7 +16,7 @@ class RadonRunner:
         return [*complexity_issues, *maintainability_issues]
 
     def _run_cc(self, repo_path: Path) -> list[Issue]:
-        command = ["radon", "cc", ".", "-j", "--min", "B"]
+        command = ["radon", "cc", ".", "-j"]
         try:
             completed = subprocess.run(command, cwd=repo_path, text=False, capture_output=True)
         except FileNotFoundError:
@@ -53,7 +53,7 @@ class RadonRunner:
         return issues
 
     def _run_mi(self, repo_path: Path) -> list[Issue]:
-        command = ["radon", "mi", ".", "-j", "--min", "B"]
+        command = ["radon", "mi", ".", "-j"]
         try:
             completed = subprocess.run(command, cwd=repo_path, text=False, capture_output=True)
         except FileNotFoundError:
