@@ -188,17 +188,32 @@ RepoListItemVM(
 
 ### Набор метрик (актуализировано под текущие раннеры)
 
-| Группа | Русское название в UI | Источник | Что показываем в карточке |
+| Группа | Короткое название в UI | Источник | Что показываем в карточке |
 |---|---|---|---|
-| Code Quality | **Линт и стиль** | `RuffRunner` | Кол-во замечаний Ruff, тренд к прошлому запуску, grade. |
-| Type Safety | **Типизация Python** | `MypyRunner` | Кол-во type errors/notes, доля файлов без ошибок, grade. |
-| Testing | **Тестовое покрытие сценариями** | `PytestRunner` | Passed/Failed/Skipped, длительность, grade по failed-rate. |
-| Complexity | **Цикломатическая сложность** | `RadonRunner` (`radon cc`) | Кол-во блоков c rank B+ и max complexity, grade. |
-| Maintainability | **Индекс сопровождаемости** | `RadonRunner` (`radon mi`) | Средний/минимальный MI и rank, grade. |
-| Dead Code | **Потенциально мёртвый код** | `VultureRunner` | Кол-во находок vulture и confidence-порог, grade. |
-| AI Signals | **Вероятность AI-генерации кода** | `DetectAIAuthorshipUseCase` | Probability, confidence, top signals + дисклеймер (не «качество», а аналитический сигнал). |
+| Code Quality | **Линт** | `RuffRunner` | Кол-во замечаний Ruff, тренд к прошлому запуску, grade. |
+| Type Safety | **Типы** | `MypyRunner` | Кол-во type errors/notes, доля файлов без ошибок, grade. |
+| Testing | **Тесты** | `PytestRunner` | Passed/Failed/Skipped, длительность, grade по failed-rate. |
+| Complexity | **Сложность** | `RadonRunner` (`radon cc`) | Кол-во блоков c rank B+ и max complexity, grade. |
+| Maintainability | **Поддержка** | `RadonRunner` (`radon mi`) | Средний/минимальный MI и rank, grade. |
+| Dead Code | **Мёртвый код** | `VultureRunner` | Кол-во находок vulture и confidence-порог, grade. |
+| Duplication | **Дубли** | `DuplicationRunner` (планируемый; до внедрения — `—`) | % дублирования кода по проекту/модулю + grade. |
+| AI Signals | **AI-сигнал** | `DetectAIAuthorshipUseCase` | Probability, confidence, top signals + дисклеймер (не «качество», а аналитический сигнал). |
 
-> Важно: метрика «duplication proxy» удалена из UI-спека как неактуальная для текущего набора инструментов (в коде нет отдельного раннера дублирования).
+> Примечание: карточка «Дубли» включена в UI в том же стандарте A–E. Пока отдельный раннер дублирования не подключен, показывается `—` и tooltip «метрика недоступна».
+
+### Примерные критерии оценивания (A–E)
+
+| Метрика | A | B | C | D | E |
+|---|---:|---:|---:|---:|---:|
+| Линт (ruff issues / KLOC) | 0–2 | 3–6 | 7–12 | 13–20 | >20 |
+| Типы (mypy errors / KLOC) | 0 | 0.1–1 | 1.1–3 | 3.1–6 | >6 |
+| Тесты (доля failed) | 0% | >0–2% | >2–5% | >5–10% | >10% |
+| Сложность (доля B+ блоков) | <5% | 5–10% | 10–20% | 20–35% | >35% |
+| Поддержка (средний MI) | ≥85 | 75–84 | 65–74 | 50–64 | <50 |
+| Мёртвый код (vulture findings / KLOC) | 0–1 | 1.1–3 | 3.1–6 | 6.1–10 | >10 |
+| **Дубли (% дублирования)** | **0–3%** | **>3–6%** | **>6–10%** | **>10–15%** | **>15%** |
+
+> Эти границы стартовые и должны настраиваться в Settings профиля качества.
 
 Пример карточки:
 ```text
@@ -306,7 +321,7 @@ Layout:
 ## 9.4 Работа с метриками на вкладке Overview
 1. Видны grade-карточки.
 2. Клик по карточке → детальная панель: источники данных, значение, пороги, история тренда.
-3. Названия карточек в UI всегда русские: «Линт и стиль», «Типизация Python», «Цикломатическая сложность», «Индекс сопровождаемости», «Потенциально мёртвый код», «Тестовое покрытие сценариями».
+3. Названия карточек в UI короткие и русские: «Линт», «Типы», «Сложность», «Поддержка», «Мёртвый код», «Тесты», «Дубли», «AI-сигнал».
 
 ---
 
@@ -320,7 +335,7 @@ Layout:
 
 Примечание по текущему состоянию backend:
 - в отчетах `CommitReportUseCase` и `WorkingTreeReportUseCase` уже напрямую участвуют `RuffRunner` и `PytestRunner`;
-- метрики `RadonRunner` / `MypyRunner` / `VultureRunner` и `DetectAIAuthorshipUseCase` должны быть подключены в общий агрегатор dashboard-метрик (или отдельные фоновые job) и отображаться в тех же карточках Overview.
+- метрики `RadonRunner` / `MypyRunner` / `VultureRunner` / `DetectAIAuthorshipUseCase` и будущий `DuplicationRunner` должны быть подключены в общий агрегатор dashboard-метрик (или отдельные фоновые job) и отображаться в тех же карточках Overview.
 
 Принцип:
 - UI не выполняет git/analysis напрямую;
