@@ -23,7 +23,10 @@ class MypyRunner:
             "--show-error-codes",
             "--no-error-summary",
         ]
-        completed = subprocess.run(command, cwd=repo_path, text=False, capture_output=True)
+        try:
+            completed = subprocess.run(command, cwd=repo_path, text=False, capture_output=True)
+        except FileNotFoundError:
+            return [Issue(tool="mypy", message="mypy not found in PATH", severity="warning")]
         stdout = decode_output(completed.stdout)
         stderr = decode_output(completed.stderr)
 
