@@ -186,6 +186,11 @@ def cmd_enqueue_jobs(args: argparse.Namespace) -> None:
     finally:
         orchestrator.stop()
 
+def cmd_gui(_: argparse.Namespace) -> None:
+    from analyze_app.presentation.qt_shell.main_window import run_desktop_app
+
+    run_desktop_app()
+
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="AnalyzeApp CLI")
@@ -252,6 +257,9 @@ def main() -> None:
     jobs_parser.add_argument("--commit-hash")
     jobs_parser.add_argument("--wait-sec", type=float, default=1.0)
     jobs_parser.set_defaults(func=cmd_enqueue_jobs)
+
+    gui_parser = subparsers.add_parser("gui", help="Run desktop Qt UI")
+    gui_parser.set_defaults(func=cmd_gui)
 
     args = parser.parse_args()
     args.func(args)
