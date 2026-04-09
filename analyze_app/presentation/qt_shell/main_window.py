@@ -24,17 +24,20 @@ from analyze_app.application.use_cases.import_repository import ImportRepository
 from analyze_app.application.use_cases.list_commits import ListCommitsUseCase
 from analyze_app.infrastructure.ai.ollama_backend import OllamaBackend
 from analyze_app.infrastructure.ai.project_overview_backend import ProjectOverviewBackend
+from analyze_app.infrastructure.analysis.duplication_runner import DuplicationRunner
 from analyze_app.infrastructure.analysis.map.ast_map_builder import AstMapBuilder
 from analyze_app.infrastructure.analysis.mypy_runner import MypyRunner
 from analyze_app.infrastructure.analysis.pytest_runner import PytestRunner
 from analyze_app.infrastructure.analysis.radon_runner import RadonRunner
 from analyze_app.infrastructure.analysis.ruff_runner import RuffRunner
+from analyze_app.infrastructure.analysis.vulture_runner import VultureRunner
 from analyze_app.infrastructure.git.backend import GitBackend
 from analyze_app.infrastructure.storage.sqlite_store import SqliteStore
 from analyze_app.presentation.qt_shell.app_menu import build_menu
 from analyze_app.presentation.qt_shell.repo_add_dialog import RepoAddDialog
 from analyze_app.presentation.qt_shell.repo_sidebar import RepoSidebar
 from analyze_app.presentation.qt_shell.report_tabs import ReportTabs
+from analyze_app.presentation.qt_shell.settings_dialog import QualitySettingsDialog
 from analyze_app.presentation.qt_shell.state_store import RepoListItemVM, UiStateStore
 from analyze_app.presentation.qt_shell.theme import apply_theme
 from analyze_app.shared.config import DEFAULT_CONFIG
@@ -110,11 +113,17 @@ class MainWindow(QMainWindow):
         self.menu.run_working_tree.triggered.connect(self._refresh_working_tree)
         self.menu.run_commit.triggered.connect(self._refresh_commits)
         self.menu.toggle_sidebar.triggered.connect(lambda: self.sidebar.setVisible(not self.sidebar.isVisible()))
+        self.menu.quality_grades.triggered.connect(self._open_quality_settings)
 
         self.tabs.commits_tab.commit_selected.connect(self._show_commit_in_status)
 
     def _bind_tab_actions(self) -> None:
         self.tabs.overview_tab.regenerate_requested.connect(self._regenerate_overview)
+
+    def _open_quality_settings(self) -> None:
+        dialog = QualitySettingsDialog(self.state_store, self)
+        if dialog.exec() == QDialog.DialogCode.Accepted and self.current_repo:
+            self._refresh_overview()
 
     def _load_repositories(self) -> None:
         items: list[RepoListItemVM] = []
@@ -242,65 +251,111 @@ class MainWindow(QMainWindow):
             return
         repo_path = Path(self.current_repo.working_path)
         tracked_files = self.git_backend.list_tracked_files(repo_path)
+        loc = self._count_python_loc(repo_path, tracked_files)
+
+        summary = "Описание пока не сгенерировано. Нажмите Regenerate."
+        self.tabs.overview_tab.update_project_info(self.current_repo.title, len(tracked_files), loc, summary)
+        self.tabs.overview_tab.update_metrics(self._calculate_quality_metrics(repo_path, loc))
+        self.tabs.overview_tab.load_readme(repo_path)
+
+    def _count_python_loc(self, repo_path: Path, tracked_files: list[str] | None = None) -> int:
         loc = 0
-        for file in tracked_files:
+        files = tracked_files if tracked_files is not None else self.git_backend.list_tracked_files(repo_path)
+        for file in files:
             if not file.endswith(".py"):
                 continue
             content = self.git_backend.read_working_tree_file(repo_path, file)
             loc += len(content.splitlines())
+        return loc
 
-        summary = "Описание пока не сгенерировано. Нажмите Regenerate."
-        self.tabs.overview_tab.update_project_info(self.current_repo.title, len(tracked_files), loc, summary)
-        self.tabs.overview_tab.update_metrics(self._calculate_quality_metrics(repo_path))
-        self.tabs.overview_tab.load_readme(repo_path)
+    def _calculate_quality_metrics(self, repo_path: Path, loc: int) -> dict[str, tuple[str, str, str]]:
+        thresholds = self.state_store.quality_thresholds()
+        kloc = max(loc / 1000.0, 0.001)
 
-    def _calculate_quality_metrics(self, repo_path: Path) -> dict[str, tuple[str, str, str]]:
-        metrics: dict[str, tuple[str, str, str]] = {
-            "duplication_proxy": ("—", "n/a", "будет добавлено в следующей итерации"),
-        }
+        metrics: dict[str, tuple[str, str, str]] = {}
 
         ruff_issues = RuffRunner().run(repo_path)
-        lint_count = len(ruff_issues)
-        metrics["lint"] = (self._grade_lower_better(lint_count, [0, 10, 30, 60]), str(lint_count), "A=0, B<=10")
+        lint_count = len([issue for issue in ruff_issues if issue.severity in {"warning", "error"}])
+        lint_per_kloc = lint_count / kloc
+        lint_thr = thresholds["lint_issues_per_kloc"]
+        metrics["lint"] = (
+            self._grade_lower_better(lint_per_kloc, lint_thr),
+            f"{lint_count} ({lint_per_kloc:.1f}/KLOC)",
+            self._fmt_thresholds("<=", lint_thr),
+        )
 
         mypy_issues = MypyRunner().run(repo_path)
-        typing_count = len(mypy_issues)
+        mypy_errors = len([issue for issue in mypy_issues if issue.severity == "error"])
+        mypy_per_kloc = mypy_errors / kloc
+        mypy_thr = thresholds["mypy_errors_per_kloc"]
         metrics["typing_health"] = (
-            self._grade_lower_better(typing_count, [0, 5, 20, 50]),
-            str(typing_count),
-            "A=0, B<=5",
+            self._grade_lower_better(mypy_per_kloc, mypy_thr),
+            f"{mypy_errors} ({mypy_per_kloc:.1f}/KLOC)",
+            self._fmt_thresholds("<=", mypy_thr),
         )
 
         tests = PytestRunner().run(repo_path)
         if tests.total > 0:
-            pass_rate = (tests.passed / tests.total) * 100
-            metrics["tests"] = (self._grade_upper_better(pass_rate, [95, 80, 60, 40]), f"{pass_rate:.1f}%", "A>=95%")
+            failed_rate = (tests.failed / tests.total) * 100.0
+            test_thr = thresholds["tests_failed_rate_pct"]
+            metrics["tests"] = (
+                self._grade_lower_better(failed_rate, test_thr),
+                f"{tests.failed}/{tests.total} ({failed_rate:.1f}%)",
+                self._fmt_thresholds("<=", test_thr),
+            )
         else:
-            metrics["tests"] = ("—", "n/a", "нет тестов")
+            metrics["tests"] = ("—", "n/a", "нет данных тестов")
 
         radon_issues = RadonRunner().run(repo_path)
-        complexity_values = _extract_values(radon_issues, r"complexity\\s+([0-9]+(?:\\.[0-9]+)?)")
-        maintainability_values = _extract_values(radon_issues, r"Maintainability index is\\s+([0-9]+(?:\\.[0-9]+)?)")
-        if complexity_values:
-            avg_complexity = sum(complexity_values) / len(complexity_values)
+        complexity_ranks = _extract_ranks(radon_issues)
+        if complexity_ranks:
+            b_plus = sum(1 for rank in complexity_ranks if rank in {"B", "C", "D", "E", "F"})
+            share_pct = (b_plus / len(complexity_ranks)) * 100.0
+            complexity_thr = thresholds["complexity_b_plus_share_pct"]
+            max_complexity = max(_extract_values(radon_issues, r"complexity\s+([0-9]+(?:\.[0-9]+)?)"), default=0.0)
             metrics["complexity"] = (
-                self._grade_lower_better(avg_complexity, [6, 10, 15, 25]),
-                f"{avg_complexity:.1f}",
-                "A<6",
+                self._grade_lower_better(share_pct, complexity_thr),
+                f"{share_pct:.1f}% B+ (max {max_complexity:.0f})",
+                self._fmt_thresholds("<=", complexity_thr),
             )
         else:
             metrics["complexity"] = ("—", "n/a", "нет данных radon")
+
+        maintainability_values = _extract_values(radon_issues, r"Maintainability index is\s+([0-9]+(?:\.[0-9]+)?)")
         if maintainability_values:
             avg_mi = sum(maintainability_values) / len(maintainability_values)
+            mi_thr = thresholds["maintainability_avg_mi"]
             metrics["maintainability"] = (
-                self._grade_upper_better(avg_mi, [90, 75, 60, 45]),
+                self._grade_upper_better(avg_mi, mi_thr),
                 f"{avg_mi:.1f}",
-                "A>=90",
+                self._fmt_thresholds(">=", mi_thr),
             )
         else:
             metrics["maintainability"] = ("—", "n/a", "нет данных radon")
 
+        dead_code_issues = VultureRunner().run(repo_path)
+        dead_code_count = len([issue for issue in dead_code_issues if issue.severity in {"warning", "error"}])
+        dead_code_per_kloc = dead_code_count / kloc
+        dead_thr = thresholds["dead_code_findings_per_kloc"]
+        metrics["dead_code"] = (
+            self._grade_lower_better(dead_code_per_kloc, dead_thr),
+            f"{dead_code_count} ({dead_code_per_kloc:.1f}/KLOC)",
+            self._fmt_thresholds("<=", dead_thr),
+        )
+
+        duplication = DuplicationRunner().run(repo_path)
+        dup_thr = thresholds["duplication_pct"]
+        metrics["duplication"] = (
+            self._grade_lower_better(duplication.duplication_pct, dup_thr),
+            f"{duplication.duplication_pct:.1f}% ({duplication.duplicate_groups} групп)",
+            self._fmt_thresholds("<=", dup_thr),
+        )
+
         return metrics
+
+    @staticmethod
+    def _fmt_thresholds(operator: str, values: list[float]) -> str:
+        return f"A{operator}{values[0]:g}, B{operator}{values[1]:g}, C{operator}{values[2]:g}, D{operator}{values[3]:g}"
 
     def _grade_lower_better(self, value: float, thresholds: list[float]) -> str:
         if value <= thresholds[0]:
@@ -400,3 +455,13 @@ def _extract_values(issues: list, pattern: str) -> list[float]:
         except ValueError:
             continue
     return values
+
+
+def _extract_ranks(issues: list) -> list[str]:
+    compiled = re.compile(r"\(rank\s+([A-F])\)")
+    ranks: list[str] = []
+    for issue in issues:
+        match = compiled.search(issue.message)
+        if match:
+            ranks.append(match.group(1))
+    return ranks

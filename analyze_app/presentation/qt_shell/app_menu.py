@@ -15,6 +15,7 @@ class AppMenuActions:
     run_working_tree: QAction
     run_commit: QAction
     toggle_sidebar: QAction
+    quality_grades: QAction
 
 
 def build_menu(window: QMainWindow) -> AppMenuActions:
@@ -35,7 +36,9 @@ def build_menu(window: QMainWindow) -> AppMenuActions:
     run_working_tree = analyze_menu.addAction("Run Working Tree Analysis")
     run_commit = analyze_menu.addAction("Run Commit Analysis")
 
-    menu_bar.addMenu("Settings")
+    settings_menu = menu_bar.addMenu("Settings")
+    quality_grades = settings_menu.addAction("Quality Grades")
+
     menu_bar.addMenu("Help")
 
     return AppMenuActions(
@@ -46,4 +49,5 @@ def build_menu(window: QMainWindow) -> AppMenuActions:
         run_working_tree=run_working_tree,
         run_commit=run_commit,
         toggle_sidebar=toggle_sidebar,
+        quality_grades=quality_grades,
     )

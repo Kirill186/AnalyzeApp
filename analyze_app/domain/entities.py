@@ -129,3 +129,11 @@ class GraphEdge:
 class ProjectGraph:
     nodes: list[GraphNode]
     edges: list[GraphEdge]
+
+
+@dataclass(slots=True)
+class DuplicationResult:
+    duplicate_groups: int
+    duplicate_fragments: int
+    duplicated_lines: int
+    duplication_pct: float
