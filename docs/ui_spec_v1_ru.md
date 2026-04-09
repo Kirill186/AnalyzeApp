@@ -172,7 +172,7 @@ RepoListItemVM(
 1. **Название проекта** (крупный заголовок).
 2. Под заголовком: **кол-во файлов и строк кода**.
 3. Блок **Quality Metrics Grades** (карточки A/B/C/…):
-   - метрики: complexity, maintainability, typing_health, tests, lint, duplication_proxy;
+   - метрики сгруппированы по текущим анализаторам проекта (см. таблицу ниже);
    - если данных нет — `—` (прочерк);
    - по клику на карточку открывается правый Drawer/диалог с деталями.
 4. Блок: **краткое описание `project_overview_backend.py`**
@@ -185,6 +185,20 @@ RepoListItemVM(
 ### Оценки A/B/C/… (настраиваемые)
 - В Settings пользователь задает пороги для каждой метрики.
 - Формула grade вычисляется в application-слое; UI только отображает.
+
+### Набор метрик (актуализировано под текущие раннеры)
+
+| Группа | Русское название в UI | Источник | Что показываем в карточке |
+|---|---|---|---|
+| Code Quality | **Линт и стиль** | `RuffRunner` | Кол-во замечаний Ruff, тренд к прошлому запуску, grade. |
+| Type Safety | **Типизация Python** | `MypyRunner` | Кол-во type errors/notes, доля файлов без ошибок, grade. |
+| Testing | **Тестовое покрытие сценариями** | `PytestRunner` | Passed/Failed/Skipped, длительность, grade по failed-rate. |
+| Complexity | **Цикломатическая сложность** | `RadonRunner` (`radon cc`) | Кол-во блоков c rank B+ и max complexity, grade. |
+| Maintainability | **Индекс сопровождаемости** | `RadonRunner` (`radon mi`) | Средний/минимальный MI и rank, grade. |
+| Dead Code | **Потенциально мёртвый код** | `VultureRunner` | Кол-во находок vulture и confidence-порог, grade. |
+| AI Signals | **Вероятность AI-генерации кода** | `DetectAIAuthorshipUseCase` | Probability, confidence, top signals + дисклеймер (не «качество», а аналитический сигнал). |
+
+> Важно: метрика «duplication proxy» удалена из UI-спека как неактуальная для текущего набора инструментов (в коде нет отдельного раннера дублирования).
 
 Пример карточки:
 ```text
@@ -292,6 +306,7 @@ Layout:
 ## 9.4 Работа с метриками на вкладке Overview
 1. Видны grade-карточки.
 2. Клик по карточке → детальная панель: источники данных, значение, пороги, история тренда.
+3. Названия карточек в UI всегда русские: «Линт и стиль», «Типизация Python», «Цикломатическая сложность», «Индекс сопровождаемости», «Потенциально мёртвый код», «Тестовое покрытие сценариями».
 
 ---
 
@@ -302,6 +317,10 @@ Layout:
 - Отчет рабочей области: `WorkingTreeReportUseCase`.
 - Карта проекта: `BuildProjectMapUseCase`.
 - Project overview summary: `BuildProjectOverviewUseCase` + `infrastructure/ai/project_overview_backend.py`.
+
+Примечание по текущему состоянию backend:
+- в отчетах `CommitReportUseCase` и `WorkingTreeReportUseCase` уже напрямую участвуют `RuffRunner` и `PytestRunner`;
+- метрики `RadonRunner` / `MypyRunner` / `VultureRunner` и `DetectAIAuthorshipUseCase` должны быть подключены в общий агрегатор dashboard-метрик (или отдельные фоновые job) и отображаться в тех же карточках Overview.
 
 Принцип:
 - UI не выполняет git/analysis напрямую;
