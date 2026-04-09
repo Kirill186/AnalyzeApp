@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -16,16 +17,19 @@ class RadonRunner:
         return [*complexity_issues, *maintainability_issues]
 
     def _run_cc(self, repo_path: Path) -> list[Issue]:
-        command = ["radon", "cc", ".", "-j"]
-        try:
-            completed = subprocess.run(command, cwd=repo_path, text=False, capture_output=True)
-        except FileNotFoundError:
-            return [Issue(tool="radon", message="radon not found in PATH", severity="warning")]
+        command = self._build_command("cc")
+        completed = subprocess.run(command, cwd=repo_path, text=False, capture_output=True)
         stdout = decode_output(completed.stdout)
         stderr = decode_output(completed.stderr)
 
         if completed.returncode != 0:
-            return [Issue(tool="radon", message=stderr.strip() or "radon cc execution failed", severity="error")]
+            return [
+                Issue(
+                    tool="radon",
+                    message=stderr.strip() or "radon cc execution failed",
+                    severity="error",
+                )
+            ]
         if not stdout.strip():
             return []
 
@@ -53,16 +57,19 @@ class RadonRunner:
         return issues
 
     def _run_mi(self, repo_path: Path) -> list[Issue]:
-        command = ["radon", "mi", ".", "-j"]
-        try:
-            completed = subprocess.run(command, cwd=repo_path, text=False, capture_output=True)
-        except FileNotFoundError:
-            return [Issue(tool="radon", message="radon not found in PATH", severity="warning")]
+        command = self._build_command("mi")
+        completed = subprocess.run(command, cwd=repo_path, text=False, capture_output=True)
         stdout = decode_output(completed.stdout)
         stderr = decode_output(completed.stderr)
 
         if completed.returncode != 0:
-            return [Issue(tool="radon", message=stderr.strip() or "radon mi execution failed", severity="error")]
+            return [
+                Issue(
+                    tool="radon",
+                    message=stderr.strip() or "radon mi execution failed",
+                    severity="error",
+                )
+            ]
         if not stdout.strip():
             return []
 
@@ -88,3 +95,7 @@ class RadonRunner:
                 )
             )
         return issues
+
+    @staticmethod
+    def _build_command(metric: str) -> list[str]:
+        return [sys.executable, "-m", "radon", metric, ".", "-j"]

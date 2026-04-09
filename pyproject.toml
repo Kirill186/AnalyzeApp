@@ -11,6 +11,7 @@ dependencies = [
   "ollama>=0.4.0",
   "PySide6>=6.7.0",
   "markdown>=3.6",
+  "radon>=6.0.1",
 ]
 
 [project.scripts]
