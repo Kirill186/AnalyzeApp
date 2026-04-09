@@ -1,0 +1,27 @@
+{
+  "model_version": "heuristic-v1",
+  "dataset_version": "AIGCodeSet-bootstrap",
+  "feature_order": [
+    "line_count",
+    "avg_line_length",
+    "comment_ratio",
+    "repetition_ratio",
+    "function_count",
+    "branch_count",
+    "snake_case_ratio",
+    "ast_depth",
+    "embedding_std"
+  ],
+  "weights": {
+    "line_count": 0.001,
+    "avg_line_length": 0.02,
+    "comment_ratio": -0.9,
+    "repetition_ratio": 1.2,
+    "function_count": -0.08,
+    "branch_count": -0.04,
+    "snake_case_ratio": -0.5,
+    "ast_depth": -0.03,
+    "embedding_std": 0.6
+  },
+  "bias": -0.35
+}

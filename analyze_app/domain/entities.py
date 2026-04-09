@@ -67,6 +67,26 @@ class LLMResult:
 
 
 @dataclass(slots=True)
+class AIAuthorshipSignal:
+    name: str
+    value: float
+    weight: float
+    direction: str
+    description: str
+
+
+@dataclass(slots=True)
+class AIAuthorshipResult:
+    scope: str
+    probability: float
+    confidence: float
+    top_signals: list[AIAuthorshipSignal]
+    calibration_version: str
+    model_info: str
+    disclaimer: str
+
+
+@dataclass(slots=True)
 class CommitReport:
     commit_hash: str
     metrics: ChangeMetrics
