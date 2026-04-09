@@ -55,6 +55,10 @@ class GitBackend:
         output = self._git(["status", "--porcelain"], repo_path)
         return [line for line in output.splitlines() if line.strip()]
 
+    def list_tracked_files(self, repo_path: Path) -> list[str]:
+        output = self._git(["ls-files"], repo_path)
+        return [line for line in output.splitlines() if line.strip()]
+
     def stage_paths(self, repo_path: Path, paths: list[str] | None = None) -> None:
         if paths:
             self._git(["add", *paths], repo_path)

@@ -67,6 +67,12 @@ class LLMResult:
 
 
 @dataclass(slots=True)
+class ProjectOverviewResult:
+    summary: str
+    model_info: str
+
+
+@dataclass(slots=True)
 class AIAuthorshipSignal:
     name: str
     value: float
