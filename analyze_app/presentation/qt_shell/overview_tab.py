@@ -130,7 +130,32 @@ def _find_readme_candidates(repo_path: Path) -> list[Path]:
     if not repo_path.exists() or not repo_path.is_dir():
         return []
 
-    files = [item for item in repo_path.iterdir() if item.is_file() and item.stem.lower() == "readme"]
+    def is_readme(path: Path) -> bool:
+        return path.is_file() and path.name.lower().startswith("readme")
+
     preferred_suffix_order = {".md": 0, ".markdown": 1, ".rst": 2, ".txt": 3, "": 4}
-    files.sort(key=lambda path: preferred_suffix_order.get(path.suffix.lower(), 9))
-    return files
+
+    root_files = [item for item in repo_path.iterdir() if is_readme(item)]
+    if root_files:
+        root_files.sort(key=lambda path: preferred_suffix_order.get(path.suffix.lower(), 9))
+        return root_files
+
+    nested_candidates: list[Path] = []
+    for path in repo_path.rglob("*"):
+        if not is_readme(path):
+            continue
+        try:
+            depth = len(path.relative_to(repo_path).parts)
+        except ValueError:
+            continue
+        if depth <= 3:
+            nested_candidates.append(path)
+
+    nested_candidates.sort(
+        key=lambda path: (
+            len(path.relative_to(repo_path).parts),
+            preferred_suffix_order.get(path.suffix.lower(), 9),
+            str(path).lower(),
+        )
+    )
+    return nested_candidates

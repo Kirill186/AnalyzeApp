@@ -17,7 +17,10 @@ class RadonRunner:
 
     def _run_cc(self, repo_path: Path) -> list[Issue]:
         command = ["radon", "cc", ".", "-j", "--min", "B"]
-        completed = subprocess.run(command, cwd=repo_path, text=False, capture_output=True)
+        try:
+            completed = subprocess.run(command, cwd=repo_path, text=False, capture_output=True)
+        except FileNotFoundError:
+            return [Issue(tool="radon", message="radon not found in PATH", severity="warning")]
         stdout = decode_output(completed.stdout)
         stderr = decode_output(completed.stderr)
 
@@ -51,7 +54,10 @@ class RadonRunner:
 
     def _run_mi(self, repo_path: Path) -> list[Issue]:
         command = ["radon", "mi", ".", "-j", "--min", "B"]
-        completed = subprocess.run(command, cwd=repo_path, text=False, capture_output=True)
+        try:
+            completed = subprocess.run(command, cwd=repo_path, text=False, capture_output=True)
+        except FileNotFoundError:
+            return [Issue(tool="radon", message="radon not found in PATH", severity="warning")]
         stdout = decode_output(completed.stdout)
         stderr = decode_output(completed.stderr)
 

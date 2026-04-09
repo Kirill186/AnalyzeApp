@@ -11,7 +11,10 @@ from analyze_app.shared.process import decode_output
 class RuffRunner:
     def run(self, repo_path: Path) -> list[Issue]:
         command = ["ruff", "check", ".", "--output-format", "json"]
-        completed = subprocess.run(command, cwd=repo_path, text=False, capture_output=True)
+        try:
+            completed = subprocess.run(command, cwd=repo_path, text=False, capture_output=True)
+        except FileNotFoundError:
+            return [Issue(tool="ruff", message="ruff not found in PATH", severity="warning")]
         stdout = decode_output(completed.stdout)
         stderr = decode_output(completed.stderr)
 
