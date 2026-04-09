@@ -31,6 +31,7 @@ python -m analyze_app.cli ai-authorship 1 /path/to/repo --scope working_tree
 python -m analyze_app.cli ai-authorship 1 /path/to/repo --scope commit --commit-hash <commit_hash>
 python -m analyze_app.cli ai-authorship 1 /path/to/repo --scope file --files src/foo.py src/bar.py
 python -m analyze_app.cli enqueue-jobs 1 /path/to/repo --commit-hash <commit_hash>
+python -m analyze_app.cli gui
 ```
 
 ## Настройка AI-summary (Ollama)

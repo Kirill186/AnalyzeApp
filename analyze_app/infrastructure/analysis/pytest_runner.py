@@ -11,7 +11,11 @@ from analyze_app.shared.process import decode_output
 class PytestRunner:
     def run(self, repo_path: Path) -> TestRunResult:
         start = time.perf_counter()
-        completed = subprocess.run(["pytest", "-q"], cwd=repo_path, text=False, capture_output=True)
+        try:
+            completed = subprocess.run(["pytest", "-q"], cwd=repo_path, text=False, capture_output=True)
+        except FileNotFoundError:
+            duration = time.perf_counter() - start
+            return TestRunResult(duration_sec=duration, failed_tests=["pytest not found in PATH"])
         duration = time.perf_counter() - start
         stdout = decode_output(completed.stdout)
 
