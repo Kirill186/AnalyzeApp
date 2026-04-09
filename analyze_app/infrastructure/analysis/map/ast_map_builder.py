@@ -13,9 +13,10 @@ class AstMapBuilder:
         edges: list[GraphEdge] = []
 
         for py_file in sorted(repo_path.rglob("*.py")):
-            if any(part.startswith(".") for part in py_file.parts):
+            rel_parts = py_file.relative_to(repo_path).parts
+            if any(part.startswith(".") for part in rel_parts):
                 continue
-            rel_path = py_file.relative_to(repo_path).as_posix()
+            rel_path = "/".join(rel_parts)
             file_node_id = f"file:{rel_path}"
             nodes.append(
                 GraphNode(

@@ -87,6 +87,9 @@ def cmd_project_map(args: argparse.Namespace) -> None:
     print("top hotspots:")
     for node in hot_files[: args.top]:
         print(f"- {node.path}: {node.hotspot_score}")
+    if not hot_files:
+        print("(не найдено .py файлов внутри указанного repo_path)")
+        print(f"проверьте путь: {Path(args.repo_path).resolve()}")
 
 
 def cmd_commit_push(args: argparse.Namespace) -> None:
