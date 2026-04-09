@@ -9,6 +9,7 @@
   - просмотр истории коммитов (`git log`);
   - отчёт по коммиту (diff + метрики + Ruff + pytest + AI-summary через Ollama);
   - карта проекта (AST graph) + hotspot score;
+  - AI-описание сути проекта и его структуры (1-2 абзаца для страницы репозитория);
   - отчёт по Working Tree;
   - flow `stage -> commit -> push`;
   - фоновые задачи (очередь + воркер).
@@ -25,6 +26,7 @@ python -m analyze_app.cli commits /path/to/repo --limit 15
 python -m analyze_app.cli report 1 /path/to/repo <commit_hash>
 python -m analyze_app.cli working-tree-report 1 /path/to/repo
 python -m analyze_app.cli project-map 1 /path/to/repo --top 10
+python -m analyze_app.cli project-overview /path/to/repo --max-files 120
 python -m analyze_app.cli ai-authorship 1 /path/to/repo --scope working_tree
 python -m analyze_app.cli ai-authorship 1 /path/to/repo --scope commit --commit-hash <commit_hash>
 python -m analyze_app.cli ai-authorship 1 /path/to/repo --scope file --files src/foo.py src/bar.py

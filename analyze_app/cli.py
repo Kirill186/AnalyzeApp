@@ -6,6 +6,7 @@ from pathlib import Path
 
 from analyze_app.application.orchestrators.analysis_job_orchestrator import AnalysisJobOrchestrator
 from analyze_app.application.use_cases.build_project_map import BuildProjectMapUseCase
+from analyze_app.application.use_cases.build_project_overview import BuildProjectOverviewUseCase
 from analyze_app.application.use_cases.commit_and_push import CommitAndPushUseCase
 from analyze_app.application.use_cases.get_commit_report import CommitReportUseCase
 from analyze_app.application.use_cases.get_working_tree_report import WorkingTreeReportUseCase
@@ -13,6 +14,7 @@ from analyze_app.application.use_cases.detect_ai_authorship import DetectAIAutho
 from analyze_app.application.use_cases.import_repository import ImportRepositoryUseCase
 from analyze_app.application.use_cases.list_commits import ListCommitsUseCase
 from analyze_app.infrastructure.ai.ollama_backend import OllamaBackend
+from analyze_app.infrastructure.ai.project_overview_backend import ProjectOverviewBackend
 from analyze_app.infrastructure.analysis.map.ast_map_builder import AstMapBuilder
 from analyze_app.infrastructure.analysis.pytest_runner import PytestRunner
 from analyze_app.infrastructure.analysis.ruff_runner import RuffRunner
@@ -93,6 +95,16 @@ def cmd_project_map(args: argparse.Namespace) -> None:
         print("(не найдено .py файлов внутри указанного repo_path)")
         print(f"проверьте путь: {Path(args.repo_path).resolve()}")
         print("если путь верный, перезапустите с --no-cache для принудительной пересборки карты")
+
+
+def cmd_project_overview(args: argparse.Namespace) -> None:
+    git_backend, _, *_ = _build_services(args.db)
+    ai_backend = ProjectOverviewBackend(DEFAULT_CONFIG.ollama_url, DEFAULT_CONFIG.ollama_model)
+    use_case = BuildProjectOverviewUseCase(git_backend, ai_backend)
+    overview = use_case.execute(Path(args.repo_path), max_files=args.max_files)
+    print(f"model: {overview.model_info}")
+    print("project_overview:")
+    print(overview.summary)
 
 
 def cmd_commit_push(args: argparse.Namespace) -> None:
@@ -209,6 +221,14 @@ def main() -> None:
     map_parser.add_argument("--top", type=int, default=10)
     map_parser.add_argument("--no-cache", action="store_true")
     map_parser.set_defaults(func=cmd_project_map)
+
+    overview_parser = subparsers.add_parser(
+        "project-overview",
+        help="Generate 1-2 paragraph project overview for repository page",
+    )
+    overview_parser.add_argument("repo_path")
+    overview_parser.add_argument("--max-files", type=int, default=120)
+    overview_parser.set_defaults(func=cmd_project_overview)
 
     commit_push_parser = subparsers.add_parser("commit-push", help="Stage, commit and optionally push")
     commit_push_parser.add_argument("repo_path")
