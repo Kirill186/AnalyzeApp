@@ -130,6 +130,17 @@ class SqliteStore:
             )
             return int(cursor.lastrowid)
 
+    def list_repositories(self) -> list[tuple[int, str, str, str, str]]:
+        with self._connect() as conn:
+            cursor = conn.execute(
+                """
+                SELECT repo_id, origin_url, working_path, default_branch, created_at
+                FROM repositories
+                ORDER BY repo_id DESC
+                """
+            )
+            return [(int(row[0]), str(row[1]), str(row[2]), str(row[3]), str(row[4])) for row in cursor.fetchall()]
+
     def save_commit_report(self, repo_id: int, report: CommitReport) -> None:
         evidence_json = json.dumps([{"file": item.file, "reason": item.reason} for item in report.ai_summary.evidence])
         with self._connect() as conn:
