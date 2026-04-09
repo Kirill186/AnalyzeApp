@@ -42,6 +42,40 @@ class GitBackend:
 
     def read_commit_file_changes(self, repo_path: Path, commit_hash: str) -> list[FileChange]:
         output = self._git(["show", "--numstat", "--format=", commit_hash], repo_path)
+        return self._parse_numstat(output)
+
+    def read_working_tree_diff(self, repo_path: Path) -> str:
+        return self._git(["diff", "HEAD"], repo_path)
+
+    def read_working_tree_file_changes(self, repo_path: Path) -> list[FileChange]:
+        output = self._git(["diff", "--numstat", "HEAD"], repo_path)
+        return self._parse_numstat(output)
+
+    def status_porcelain(self, repo_path: Path) -> list[str]:
+        output = self._git(["status", "--porcelain"], repo_path)
+        return [line for line in output.splitlines() if line.strip()]
+
+    def stage_paths(self, repo_path: Path, paths: list[str] | None = None) -> None:
+        if paths:
+            self._git(["add", *paths], repo_path)
+            return
+        self._git(["add", "-A"], repo_path)
+
+    def commit(self, repo_path: Path, message: str) -> str:
+        self._git(["commit", "-m", message], repo_path)
+        return self._git(["rev-parse", "HEAD"], repo_path)
+
+    def push_current_branch(self, repo_path: Path) -> None:
+        self._git(["push"], repo_path)
+
+    def file_churn(self, repo_path: Path, max_commits: int = 200) -> dict[str, int]:
+        output = self._git(["log", f"--max-count={max_commits}", "--numstat", "--format="], repo_path)
+        churn: dict[str, int] = {}
+        for change in self._parse_numstat(output):
+            churn[change.path] = churn.get(change.path, 0) + change.additions + change.deletions
+        return churn
+
+    def _parse_numstat(self, output: str) -> list[FileChange]:
         changes: list[FileChange] = []
         for row in output.splitlines():
             parts = row.split("\t")

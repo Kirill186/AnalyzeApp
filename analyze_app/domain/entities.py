@@ -54,9 +54,16 @@ class TestRunResult:
 
 
 @dataclass(slots=True)
+class EvidenceBlock:
+    file: str
+    reason: str
+
+
+@dataclass(slots=True)
 class LLMResult:
     summary: str
     model_info: str
+    evidence: list[EvidenceBlock] = field(default_factory=list)
 
 
 @dataclass(slots=True)
@@ -66,3 +73,33 @@ class CommitReport:
     issues: list[Issue]
     tests: TestRunResult
     ai_summary: LLMResult
+
+
+@dataclass(slots=True)
+class WorkingTreeReport:
+    metrics: ChangeMetrics
+    issues: list[Issue]
+    tests: TestRunResult
+    ai_summary: LLMResult
+
+
+@dataclass(slots=True)
+class GraphNode:
+    node_id: str
+    kind: str
+    label: str
+    path: str
+    hotspot_score: int = 0
+
+
+@dataclass(slots=True)
+class GraphEdge:
+    source: str
+    target: str
+    relation: str
+
+
+@dataclass(slots=True)
+class ProjectGraph:
+    nodes: list[GraphNode]
+    edges: list[GraphEdge]
