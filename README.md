@@ -31,6 +31,7 @@ python -m analyze_app.cli ai-authorship 1 /path/to/repo --scope working_tree
 python -m analyze_app.cli ai-authorship 1 /path/to/repo --scope commit --commit-hash <commit_hash>
 python -m analyze_app.cli ai-authorship 1 /path/to/repo --scope file --files src/foo.py src/bar.py
 python -m analyze_app.cli enqueue-jobs 1 /path/to/repo --commit-hash <commit_hash>
+python -m analyze_app.cli gui
 ```
 
 ## Настройка AI-summary (Ollama)
@@ -90,6 +91,6 @@ export ANALYZE_APP_AI_AUTHORSHIP_CALIBRATION_PATH="/path/to/calibration.json"
 
 ## Ограничения
 
-- UI-слой пока не добавлен; реализованы backend/CLI-компоненты. Детальная спецификация будущего интерфейса: `docs/ui_spec_v1_ru.md`.
+- Desktop UI реализует базовый каркас вкладок и workflows; часть визуализаций (commit graph webview) пока отображается в placeholder-режиме.
 - AIAuthorship является вероятностной эвристикой; не заменяет экспертную ревизию.
 - Фоновые задачи остаются in-process и single-worker.
