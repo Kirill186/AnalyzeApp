@@ -1,0 +1,13 @@
+<!doctype html><html lang="ru"><head><meta charset="utf-8" />
+<style>
+body{font-family:Inter,Segoe UI,sans-serif;background:#0a1020;color:#eaf0ff;margin:0;padding:16px}
+.grid{display:grid;grid-template-columns:320px 1fr;gap:12px}
+.panel{background:#121d37;border:1px solid #2c3f6b;border-radius:12px;padding:12px}
+.file{padding:6px 0;border-bottom:1px solid #25385f;font-family:ui-monospace,monospace;font-size:12px}
+pre{background:#0b1428;border-radius:8px;padding:10px;overflow:auto;max-height:70vh}
+</style></head><body><div id="app"></div>
+<script>
+const data = __DATA_JSON__;
+const files = data.files.map(f=>`<div class="file">${f}</div>`).join('');
+document.getElementById('app').innerHTML = `<h2>Workspace</h2><div class="grid"><section class="panel"><h3>Измененные файлы</h3>${files||'Нет изменений'}</section><section class="panel"><h3>Diff preview</h3><pre>${data.diff}</pre></section></div>`;
+</script></body></html>

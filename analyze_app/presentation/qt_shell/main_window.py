@@ -432,7 +432,7 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "AI overview", str(error))
             return
         self.store.save_project_overview(self.current_repo.repo_id, overview.summary, overview.model_info)
-        self.tabs.overview_tab.overview_text.setMarkdown(overview.summary)
+        self.tabs.overview_tab.set_summary_markdown(overview.summary)
 
     def _refresh_commits(self) -> None:
         if not self.current_repo:
