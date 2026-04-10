@@ -19,11 +19,13 @@ from PySide6.QtWidgets import (
 
 from analyze_app.application.use_cases.build_project_map import BuildProjectMapUseCase
 from analyze_app.application.use_cases.build_project_overview import BuildProjectOverviewUseCase
+from analyze_app.application.use_cases.detect_ai_authorship import DetectAIAuthorshipUseCase
 from analyze_app.application.use_cases.get_working_tree_report import WorkingTreeReportUseCase
 from analyze_app.application.use_cases.import_repository import ImportRepositoryUseCase
 from analyze_app.application.use_cases.list_commits import ListCommitsUseCase
 from analyze_app.infrastructure.ai.ollama_backend import OllamaBackend
 from analyze_app.infrastructure.ai.project_overview_backend import ProjectOverviewBackend
+from analyze_app.infrastructure.ai.authorship import FeatureExtractor, ModelRuntime, ProbabilityCalibrator
 from analyze_app.infrastructure.analysis.duplication_runner import DuplicationRunner
 from analyze_app.infrastructure.analysis.map.ast_map_builder import AstMapBuilder
 from analyze_app.infrastructure.analysis.mypy_runner import MypyRunner
@@ -255,7 +257,8 @@ class MainWindow(QMainWindow):
         tracked_files = self.git_backend.list_tracked_files(repo_path)
         loc = self._count_python_loc(repo_path, tracked_files)
 
-        summary = "Описание пока не сгенерировано. Нажмите Regenerate."
+        cached_overview = self.store.load_project_overview(self.current_repo.repo_id)
+        summary = cached_overview[0] if cached_overview else "Описание пока не сгенерировано. Нажмите Regenerate."
         self.tabs.overview_tab.update_project_info(self.current_repo.title, len(tracked_files), loc, summary)
         self.tabs.overview_tab.update_metrics(self._calculate_quality_metrics(repo_path, loc))
         self.tabs.overview_tab.load_readme(repo_path)
@@ -352,8 +355,44 @@ class MainWindow(QMainWindow):
             f"{duplication.duplication_pct:.1f}% ({duplication.duplicate_groups} групп)",
             self._fmt_thresholds("<=", dup_thr),
         )
+        metrics["ai_signal"] = self._calculate_ai_signal_metric(repo_path)
 
         return metrics
+
+    def _calculate_ai_signal_metric(self, repo_path: Path) -> tuple[str, str, str]:
+        if not self.current_repo:
+            return "—", "n/a", "репозиторий не выбран"
+        try:
+            result = self._build_ai_authorship_use_case().execute(
+                repo_id=self.current_repo.repo_id,
+                repo_path=repo_path,
+                scope="working_tree",
+                use_cache=True,
+            )
+        except Exception:
+            return "—", "n/a", "нет данных AIAuthorship"
+
+        probability_pct = result.probability * 100.0
+        if probability_pct < 20:
+            grade = "A"
+        elif probability_pct < 40:
+            grade = "B"
+        elif probability_pct < 60:
+            grade = "C"
+        elif probability_pct < 80:
+            grade = "D"
+        else:
+            grade = "E"
+        return grade, f"{probability_pct:.1f}% (conf {result.confidence:.2f})", "ниже — лучше"
+
+    def _build_ai_authorship_use_case(self):
+        return DetectAIAuthorshipUseCase(
+            git_backend=self.git_backend,
+            store=self.store,
+            extractor=FeatureExtractor(),
+            model_runtime=ModelRuntime(DEFAULT_CONFIG.ai_authorship_model_path),
+            calibrator=ProbabilityCalibrator(DEFAULT_CONFIG.ai_authorship_calibration_path),
+        )
 
     @staticmethod
     def _fmt_thresholds(operator: str, values: list[float]) -> str:
@@ -392,6 +431,7 @@ class MainWindow(QMainWindow):
         except Exception as error:  # noqa: BLE001
             QMessageBox.warning(self, "AI overview", str(error))
             return
+        self.store.save_project_overview(self.current_repo.repo_id, overview.summary, overview.model_info)
         self.tabs.overview_tab.overview_text.setMarkdown(overview.summary)
 
     def _refresh_commits(self) -> None:

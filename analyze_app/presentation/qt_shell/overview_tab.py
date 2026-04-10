@@ -51,6 +51,7 @@ class OverviewTab(QWidget):
         ("maintainability", "Поддержка"),
         ("dead_code", "Мёртвый код"),
         ("duplication", "Дубли"),
+        ("ai_signal", "AI-сигнал"),
     ]
 
     def __init__(self, parent=None) -> None:

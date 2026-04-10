@@ -118,6 +118,16 @@ class SqliteStore:
                 )
                 """
             )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS project_overviews (
+                    repo_id INTEGER PRIMARY KEY,
+                    summary TEXT NOT NULL,
+                    model_info TEXT NOT NULL,
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+                )
+                """
+            )
 
     def add_repository(self, origin_url: str, working_path: str, default_branch: str = "main") -> int:
         with self._connect() as conn:
@@ -253,6 +263,31 @@ class SqliteStore:
                 """,
                 (job_type, job_key, status, json.dumps(payload)),
             )
+
+    def save_project_overview(self, repo_id: int, summary: str, model_info: str) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO project_overviews (repo_id, summary, model_info)
+                VALUES (?, ?, ?)
+                """,
+                (repo_id, summary, model_info),
+            )
+
+    def load_project_overview(self, repo_id: int) -> tuple[str, str] | None:
+        with self._connect() as conn:
+            cursor = conn.execute(
+                """
+                SELECT summary, model_info
+                FROM project_overviews
+                WHERE repo_id = ?
+                """,
+                (repo_id,),
+            )
+            row = cursor.fetchone()
+            if not row:
+                return None
+        return str(row[0]), str(row[1])
 
 
     def save_ai_authorship(self, repo_id: int, scope_key: str, result: AIAuthorshipResult) -> None:
