@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import QUrl, Qt
+from PySide6.QtCore import QSignalBlocker, QUrl
 from PySide6.QtWebEngineWidgets import QWebEngineView
 from PySide6.QtWidgets import QComboBox, QHBoxLayout, QLabel, QVBoxLayout, QWidget
 
@@ -26,21 +26,50 @@ class ProjectMapTab(QWidget):
         root = QVBoxLayout(self)
         root.addLayout(top)
         root.addWidget(self.web)
-        self._render([])
+
+        self._nodes: list[dict[str, str | int]] = []
+        self._edges: list[dict[str, str]] = []
+
+        self.mode_combo.currentTextChanged.connect(self._render_current_state)
+        self._render_current_state()
 
     def set_project_map(self, graph: ProjectGraph) -> None:
-        nodes = [
+        self._nodes = [
             {
+                "id": node.node_id,
                 "kind": node.kind,
                 "label": node.label,
                 "path": node.path,
-                "hotspot": f"{node.hotspot_score:.2f}",
+                "hotspot": node.hotspot_score,
             }
             for node in graph.nodes
         ]
-        self._render(nodes)
+        self._edges = [
+            {
+                "source": edge.source,
+                "target": edge.target,
+                "relation": edge.relation,
+            }
+            for edge in graph.edges
+        ]
+        self._render_current_state()
 
-    def _render(self, nodes: list[dict[str, str]]) -> None:
+    def set_mode(self, mode: str) -> None:
+        index = self.mode_combo.findText(mode)
+        if index < 0:
+            return
+        with QSignalBlocker(self.mode_combo):
+            self.mode_combo.setCurrentIndex(index)
+        self._render_current_state()
+
+    def _render_current_state(self) -> None:
         template_path = Path(__file__).with_name("web_assets") / "project_map.html"
-        html = render_html_template(template_path, {"nodes": nodes, "mode": self.mode_combo.currentText()})
-        self.web.setHtml(html, QUrl.fromLocalFile(str(template_path.parent)) )
+        html = render_html_template(
+            template_path,
+            {
+                "nodes": self._nodes,
+                "edges": self._edges,
+                "mode": self.mode_combo.currentText(),
+            },
+        )
+        self.web.setHtml(html, QUrl.fromLocalFile(str(template_path.parent)))
