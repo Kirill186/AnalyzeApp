@@ -2,48 +2,129 @@
 <html lang="ru">
 <head>
 <meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
 <style>
-:root{color-scheme:dark}
-body{font-family:Inter,Segoe UI,Arial,sans-serif;background:#0a1020;color:#eaf0ff;margin:0;padding:20px}
-.hero{display:flex;justify-content:space-between;align-items:flex-start;background:linear-gradient(135deg,#162746,#101a32);border:1px solid #2c3f6b;border-radius:18px;padding:20px}
-.title{font-size:28px;font-weight:700;margin:0}
-.muted{color:#9bb0d6}
-.metrics{display:grid;grid-template-columns:repeat(4,minmax(140px,1fr));gap:12px;margin-top:16px}
-.card{background:#121d37;border:1px solid #2c3f6b;border-radius:14px;padding:12px}
-.card .name{font-size:12px;color:#9bb0d6;text-transform:uppercase;letter-spacing:.08em}
-.card .grade{font-size:24px;font-weight:700;margin-top:4px}
-.card .val{font-size:13px;color:#d5e0fb;margin-top:4px}
-.panel{background:#121d37;border:1px solid #2c3f6b;border-radius:16px;padding:16px;margin-top:16px}
-.panel h3{margin:0 0 10px 0}
+:root {
+  color-scheme: dark;
+  --bg1:#070d1e;
+  --bg2:#04070f;
+  --glass:rgba(255,255,255,.06);
+  --stroke:rgba(168,194,255,.25);
+  --text:#eaf0ff;
+  --muted:#9bb0d6;
+}
+html,body{height:100%}
+body{
+  margin:0;
+  font-family:Inter,Segoe UI,Arial,sans-serif;
+  background:radial-gradient(1200px 760px at 18% 12%, #17356f, var(--bg1) 48%, var(--bg2));
+  color:var(--text);
+  overflow:auto;
+}
+#bg{position:fixed;inset:0;z-index:0}
+#app{position:relative;z-index:1;padding:20px}
+.hero,.panel,.metric{backdrop-filter: blur(8px)}
+.hero{
+  display:flex;justify-content:space-between;align-items:flex-start;gap:16px;
+  background:linear-gradient(145deg, rgba(23,45,86,.65), rgba(10,18,34,.7));
+  border:1px solid var(--stroke);border-radius:20px;padding:20px;
+}
+.title{font-size:30px;font-weight:750;margin:0}
+.muted{color:var(--muted)}
+.metrics{display:grid;grid-template-columns:repeat(4,minmax(170px,1fr));gap:12px;margin-top:16px}
+.metric{
+  background:linear-gradient(180deg, rgba(255,255,255,.08), rgba(255,255,255,.03));
+  border:1px solid var(--stroke);border-radius:16px;padding:12px;
+}
+.name{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.09em}
+.grade{font-size:30px;font-weight:800;line-height:1;margin-top:6px}
+.val{font-size:13px;color:#d5e0fb;margin-top:8px}
+.panel{background:var(--glass);border:1px solid var(--stroke);border-radius:16px;padding:16px;margin-top:16px}
+.panel h3{margin:0 0 10px 0;font-size:16px}
 .content{line-height:1.5}
 pre,code{background:#0b1428;border-radius:8px}
 pre{padding:10px;overflow:auto}
 table{border-collapse:collapse;width:100%} td,th{border:1px solid #30466f;padding:6px}
+@media (max-width:960px){.metrics{grid-template-columns:repeat(2,minmax(140px,1fr));}.title{font-size:24px}}
 </style>
 </head>
 <body>
+<canvas id="bg"></canvas>
 <div id="app"></div>
 <script>
 const data = __DATA_JSON__;
-const metrics = data.metrics.map(m => `
-  <div class="card">
+
+function gradeColor(grade){
+  const map = {
+    'A':'#6BFFB1',
+    'B':'#A7FF7A',
+    'C':'#FFD65A',
+    'D':'#FF9C4A',
+    'E':'#FF5C70'
+  };
+  return map[(grade || '').trim().toUpperCase()] || '#EAF0FF';
+}
+
+const metrics = data.metrics.map(m => {
+  const color = gradeColor(m.grade);
+  return `
+  <article class="metric">
     <div class="name">${m.label}</div>
-    <div class="grade">${m.grade}</div>
+    <div class="grade" style="color:${color}">${m.grade}</div>
     <div class="val">${m.value}</div>
-    <div class="muted">${m.threshold}</div>
-  </div>`).join('');
+  </article>`;
+}).join('');
+
 document.getElementById('app').innerHTML = `
   <section class="hero">
     <div>
       <h1 class="title">${data.title}</h1>
       <div class="muted">Файлы: ${data.filesCount} • LOC: ${data.loc}</div>
     </div>
-    <div class="muted">AnalyzeApp • Overview</div>
+    <div class="muted">AnalyzeApp • Обзор</div>
   </section>
   <section class="metrics">${metrics}</section>
   <section class="panel"><h3>Project overview</h3><div class="content">${data.summaryHtml}</div></section>
   <section class="panel"><h3>README</h3><div class="content">${data.readmeHtml}</div></section>
 `;
+
+(() => {
+  const c = document.getElementById('bg');
+  const ctx = c.getContext('2d');
+  let w=0,h=0,dpr=1;
+  const N = 120;
+  const pts = [];
+  function rand(a,b){ return a + Math.random()*(b-a); }
+  function resize(){
+    dpr = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
+    w = c.clientWidth = window.innerWidth;
+    h = c.clientHeight = Math.max(window.innerHeight, document.body.scrollHeight);
+    c.width = Math.floor(w * dpr); c.height = Math.floor(h * dpr);
+    ctx.setTransform(dpr,0,0,dpr,0,0);
+  }
+  function init(){
+    pts.length = 0;
+    for(let i=0;i<N;i++){ pts.push({x:rand(0,w), y:rand(0,h), vx:rand(-0.25,0.25), vy:rand(-0.25,0.25), r:rand(0.7,1.8)}); }
+  }
+  function tick(){
+    ctx.clearRect(0,0,w,h);
+    for(const p of pts){
+      p.x += p.vx; p.y += p.vy;
+      if(p.x<0 || p.x>w) p.vx *= -1;
+      if(p.y<0 || p.y>h) p.vy *= -1;
+      ctx.beginPath(); ctx.arc(p.x,p.y,p.r,0,Math.PI*2); ctx.fillStyle='rgba(180,210,255,.55)'; ctx.fill();
+    }
+    for(let i=0;i<pts.length;i++){
+      for(let j=i+1;j<pts.length;j++){
+        const a=pts[i], b=pts[j]; const dx=a.x-b.x, dy=a.y-b.y; const d=Math.hypot(dx,dy);
+        if(d<130){ ctx.strokeStyle=`rgba(110,160,255,${(1-d/130)*0.26})`; ctx.lineWidth=1; ctx.beginPath(); ctx.moveTo(a.x,a.y); ctx.lineTo(b.x,b.y); ctx.stroke(); }
+      }
+    }
+    requestAnimationFrame(tick);
+  }
+  addEventListener('resize', ()=>{resize(); init();}, {passive:true});
+  resize(); init(); tick();
+})();
 </script>
 </body>
 </html>
