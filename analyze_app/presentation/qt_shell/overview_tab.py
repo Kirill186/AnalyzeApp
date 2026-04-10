@@ -2,42 +2,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import Signal
-from PySide6.QtWidgets import (
-    QFrame,
-    QGridLayout,
-    QGroupBox,
-    QHBoxLayout,
-    QLabel,
-    QPushButton,
-    QTextBrowser,
-    QVBoxLayout,
-    QWidget,
-)
+from PySide6.QtCore import QUrl, Signal
+from PySide6.QtWebEngineWidgets import QWebEngineView
+from PySide6.QtWidgets import QHBoxLayout, QPushButton, QVBoxLayout, QWidget
 
-
-class MetricCard(QFrame):
-    clicked = Signal(str)
-
-    def __init__(self, metric_name: str, grade: str = "—", value: str = "—", threshold: str = "") -> None:
-        super().__init__()
-        self.metric_name = metric_name
-        self.setObjectName("card")
-        self.setFrameShape(QFrame.StyledPanel)
-
-        layout = QVBoxLayout(self)
-        layout.addWidget(QLabel(metric_name))
-        self.grade_label = QLabel(f"Grade: {grade}")
-        self.value_label = QLabel(f"Value: {value}")
-        self.threshold_label = QLabel(threshold)
-        self.threshold_label.setObjectName("secondary")
-        layout.addWidget(self.grade_label)
-        layout.addWidget(self.value_label)
-        layout.addWidget(self.threshold_label)
-
-    def mousePressEvent(self, event) -> None:  # noqa: N802
-        self.clicked.emit(self.metric_name)
-        super().mousePressEvent(event)
+from analyze_app.presentation.qt_shell.web_view_utils import markdown_to_html, render_html_template
 
 
 class OverviewTab(QWidget):
@@ -56,67 +25,66 @@ class OverviewTab(QWidget):
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
+        self._state = {
+            "title": "Выберите репозиторий",
+            "filesCount": "—",
+            "loc": "—",
+            "summaryHtml": "<p class='muted'>Описание пока отсутствует</p>",
+            "readmeHtml": "<p class='muted'>README отсутствует</p>",
+            "metrics": [
+                {"label": label, "grade": "—", "value": "—", "threshold": ""}
+                for _, label in self.METRICS_ORDER
+            ],
+        }
 
-        self.project_title = QLabel("Выберите репозиторий")
-        self.project_title.setStyleSheet("font-size: 24px; font-weight: 600;")
-        self.stats_label = QLabel("Файлы: — • LOC: —")
-        self.stats_label.setObjectName("secondary")
-
-        metrics_box = QGroupBox("Quality Metrics Grades")
-        self.metrics_layout = QGridLayout(metrics_box)
-        self.cards: dict[str, MetricCard] = {}
-        for idx, (key, label) in enumerate(self.METRICS_ORDER):
-            card = MetricCard(label)
-            self.metrics_layout.addWidget(card, idx // 3, idx % 3)
-            self.cards[key] = card
-
-        overview_header = QHBoxLayout()
-        overview_header.addWidget(QLabel("Project Overview"))
         self.regenerate_btn = QPushButton("Regenerate")
         self.regenerate_btn.clicked.connect(self.regenerate_requested.emit)
-        overview_header.addStretch()
-        overview_header.addWidget(self.regenerate_btn)
 
-        self.overview_text = QTextBrowser()
-        self.overview_text.setOpenExternalLinks(True)
+        toolbar = QHBoxLayout()
+        toolbar.addStretch()
+        toolbar.addWidget(self.regenerate_btn)
 
-        readme_box = QGroupBox("README")
-        readme_layout = QVBoxLayout(readme_box)
-        self.readme_text = QTextBrowser()
-        self.readme_text.setMarkdown("README отсутствует")
-        readme_layout.addWidget(self.readme_text)
+        self.web = QWebEngineView()
 
         root = QVBoxLayout(self)
-        root.addWidget(self.project_title)
-        root.addWidget(self.stats_label)
-        root.addWidget(metrics_box)
-        root.addLayout(overview_header)
-        root.addWidget(self.overview_text)
-        root.addWidget(readme_box)
+        root.addLayout(toolbar)
+        root.addWidget(self.web)
+        self._render()
+
+    def set_summary_markdown(self, summary: str) -> None:
+        self._state["summaryHtml"] = markdown_to_html(summary or "Описание пока отсутствует")
+        self._render()
 
     def update_project_info(self, title: str, files_count: int, loc: int, summary: str) -> None:
-        self.project_title.setText(title)
-        self.stats_label.setText(f"Файлы: {files_count} • LOC: {loc}")
-        self.overview_text.setMarkdown(summary or "Описание пока отсутствует")
+        self._state["title"] = title
+        self._state["filesCount"] = files_count
+        self._state["loc"] = loc
+        self._state["summaryHtml"] = markdown_to_html(summary or "Описание пока отсутствует")
+        self._render()
 
     def update_metrics(self, metrics: dict[str, tuple[str, str, str]]) -> None:
-        for metric_name, card in self.cards.items():
+        self._state["metrics"] = []
+        for metric_name, label in self.METRICS_ORDER:
             grade, value, threshold = metrics.get(metric_name, ("—", "—", ""))
-            card.grade_label.setText(f"Grade: {grade}")
-            card.value_label.setText(f"Value: {value}")
-            card.threshold_label.setText(threshold)
+            self._state["metrics"].append(
+                {"label": label, "grade": grade, "value": value, "threshold": threshold}
+            )
+        self._render()
 
     def load_readme(self, repo_path: Path) -> None:
         candidates = _find_readme_candidates(repo_path)
         if candidates:
             candidate = candidates[0]
             content = candidate.read_text(encoding="utf-8", errors="ignore")
-            if candidate.suffix.lower() == ".md" or candidate.name.lower() == "readme":
-                self.readme_text.setMarkdown(content)
-            else:
-                self.readme_text.setPlainText(content)
-            return
-        self.readme_text.setMarkdown("README отсутствует")
+            self._state["readmeHtml"] = markdown_to_html(content)
+        else:
+            self._state["readmeHtml"] = "<p class='muted'>README отсутствует</p>"
+        self._render()
+
+    def _render(self) -> None:
+        template_path = Path(__file__).with_name("web_assets") / "overview.html"
+        html = render_html_template(template_path, self._state)
+        self.web.setHtml(html, QUrl.fromLocalFile(str(template_path.parent)) )
 
 
 def _find_readme_candidates(repo_path: Path) -> list[Path]:

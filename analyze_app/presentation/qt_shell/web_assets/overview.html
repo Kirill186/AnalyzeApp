@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8" />
+<style>
+:root{color-scheme:dark}
+body{font-family:Inter,Segoe UI,Arial,sans-serif;background:#0a1020;color:#eaf0ff;margin:0;padding:20px}
+.hero{display:flex;justify-content:space-between;align-items:flex-start;background:linear-gradient(135deg,#162746,#101a32);border:1px solid #2c3f6b;border-radius:18px;padding:20px}
+.title{font-size:28px;font-weight:700;margin:0}
+.muted{color:#9bb0d6}
+.metrics{display:grid;grid-template-columns:repeat(4,minmax(140px,1fr));gap:12px;margin-top:16px}
+.card{background:#121d37;border:1px solid #2c3f6b;border-radius:14px;padding:12px}
+.card .name{font-size:12px;color:#9bb0d6;text-transform:uppercase;letter-spacing:.08em}
+.card .grade{font-size:24px;font-weight:700;margin-top:4px}
+.card .val{font-size:13px;color:#d5e0fb;margin-top:4px}
+.panel{background:#121d37;border:1px solid #2c3f6b;border-radius:16px;padding:16px;margin-top:16px}
+.panel h3{margin:0 0 10px 0}
+.content{line-height:1.5}
+pre,code{background:#0b1428;border-radius:8px}
+pre{padding:10px;overflow:auto}
+table{border-collapse:collapse;width:100%} td,th{border:1px solid #30466f;padding:6px}
+</style>
+</head>
+<body>
+<div id="app"></div>
+<script>
+const data = __DATA_JSON__;
+const metrics = data.metrics.map(m => `
+  <div class="card">
+    <div class="name">${m.label}</div>
+    <div class="grade">${m.grade}</div>
+    <div class="val">${m.value}</div>
+    <div class="muted">${m.threshold}</div>
+  </div>`).join('');
+document.getElementById('app').innerHTML = `
+  <section class="hero">
+    <div>
+      <h1 class="title">${data.title}</h1>
+      <div class="muted">Файлы: ${data.filesCount} • LOC: ${data.loc}</div>
+    </div>
+    <div class="muted">AnalyzeApp • Overview</div>
+  </section>
+  <section class="metrics">${metrics}</section>
+  <section class="panel"><h3>Project overview</h3><div class="content">${data.summaryHtml}</div></section>
+  <section class="panel"><h3>README</h3><div class="content">${data.readmeHtml}</div></section>
+`;
+</script>
+</body>
+</html>

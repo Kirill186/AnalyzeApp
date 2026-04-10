@@ -1,7 +1,12 @@
 from __future__ import annotations
 
-from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QComboBox, QHBoxLayout, QLabel, QListWidget, QPushButton, QSplitter, QTextEdit, QVBoxLayout, QWidget
+from pathlib import Path
+
+from PySide6.QtCore import QUrl
+from PySide6.QtWidgets import QComboBox, QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget
+from PySide6.QtWebEngineWidgets import QWebEngineView
+
+from analyze_app.presentation.qt_shell.web_view_utils import escape_plain, render_html_template
 
 
 class WorkspaceTab(QWidget):
@@ -20,22 +25,25 @@ class WorkspaceTab(QWidget):
         top.addWidget(self.stage_btn)
         top.addWidget(self.open_btn)
 
-        self.files_list = QListWidget()
-        self.diff_view = QTextEdit()
-        self.diff_view.setReadOnly(True)
-
-        splitter = QSplitter(Qt.Horizontal)
-        splitter.addWidget(self.files_list)
-        splitter.addWidget(self.diff_view)
-        splitter.setSizes([350, 750])
+        self._files: list[str] = []
+        self._diff = ""
+        self.web = QWebEngineView()
 
         root = QVBoxLayout(self)
         root.addLayout(top)
-        root.addWidget(splitter)
+        root.addWidget(self.web)
+        self._render()
 
     def set_files(self, files: list[str]) -> None:
-        self.files_list.clear()
-        self.files_list.addItems(files)
+        self._files = files
+        self._render()
 
     def set_diff(self, diff_text: str) -> None:
-        self.diff_view.setPlainText(diff_text or "Нет изменений")
+        self._diff = diff_text or "Нет изменений"
+        self._render()
+
+    def _render(self) -> None:
+        template_path = Path(__file__).with_name("web_assets") / "workspace.html"
+        payload = {"files": self._files, "diff": escape_plain(self._diff)}
+        html = render_html_template(template_path, payload)
+        self.web.setHtml(html, QUrl.fromLocalFile(str(template_path.parent)) )

@@ -1,9 +1,13 @@
 from __future__ import annotations
 
-from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QComboBox, QHBoxLayout, QLabel, QListWidget, QSplitter, QTextEdit, QVBoxLayout, QWidget
+from pathlib import Path
+
+from PySide6.QtCore import QUrl, Qt
+from PySide6.QtWebEngineWidgets import QWebEngineView
+from PySide6.QtWidgets import QComboBox, QHBoxLayout, QLabel, QVBoxLayout, QWidget
 
 from analyze_app.domain.entities import ProjectGraph
+from analyze_app.presentation.qt_shell.web_view_utils import render_html_template
 
 
 class ProjectMapTab(QWidget):
@@ -17,25 +21,26 @@ class ProjectMapTab(QWidget):
         top.addWidget(self.mode_combo)
         top.addStretch()
 
-        self.graph_list = QListWidget()
-        self.details = QTextEdit()
-        self.details.setReadOnly(True)
-
-        splitter = QSplitter(Qt.Horizontal)
-        splitter.addWidget(self.graph_list)
-        splitter.addWidget(self.details)
-        splitter.setSizes([700, 400])
+        self.web = QWebEngineView()
 
         root = QVBoxLayout(self)
         root.addLayout(top)
-        root.addWidget(splitter)
-
-        self.graph_list.currentTextChanged.connect(self._show_details)
+        root.addWidget(self.web)
+        self._render([])
 
     def set_project_map(self, graph: ProjectGraph) -> None:
-        self.graph_list.clear()
-        for node in graph.nodes:
-            self.graph_list.addItem(f"{node.kind}: {node.label} ({node.path}) [hotspot={node.hotspot_score}]")
+        nodes = [
+            {
+                "kind": node.kind,
+                "label": node.label,
+                "path": node.path,
+                "hotspot": f"{node.hotspot_score:.2f}",
+            }
+            for node in graph.nodes
+        ]
+        self._render(nodes)
 
-    def _show_details(self, text: str) -> None:
-        self.details.setPlainText(text)
+    def _render(self, nodes: list[dict[str, str]]) -> None:
+        template_path = Path(__file__).with_name("web_assets") / "project_map.html"
+        html = render_html_template(template_path, {"nodes": nodes, "mode": self.mode_combo.currentText()})
+        self.web.setHtml(html, QUrl.fromLocalFile(str(template_path.parent)) )

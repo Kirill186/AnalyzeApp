@@ -1,0 +1,12 @@
+<!doctype html><html lang="ru"><head><meta charset="utf-8" />
+<style>
+body{font-family:Inter,Segoe UI,sans-serif;background:#0a1020;color:#eaf0ff;margin:0;padding:16px}
+.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+.card{background:#121d37;border:1px solid #2c3f6b;border-radius:12px;padding:12px}
+.path{color:#9bb0d6;font-size:12px}.hot{font-weight:700;color:#9ec1ff}
+</style></head><body><div id="app"></div>
+<script>
+const data = __DATA_JSON__;
+const cards = data.nodes.map(n=>`<div class="card"><div><b>${n.kind}</b> • ${n.label}</div><div class="path">${n.path}</div><div class="hot">Hotspot: ${n.hotspot}</div></div>`).join('');
+document.getElementById('app').innerHTML = `<h2>Карта проекта</h2><div class="grid">${cards || '<div>Нет данных графа</div>'}</div>`;
+</script></body></html>
