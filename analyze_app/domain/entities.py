@@ -18,6 +18,7 @@ class Commit:
     author: str
     authored_at: datetime
     message: str
+    parents: tuple[str, ...] = field(default_factory=tuple)
 
 
 @dataclass(slots=True)

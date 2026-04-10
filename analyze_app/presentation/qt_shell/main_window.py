@@ -116,6 +116,8 @@ class MainWindow(QMainWindow):
         self.menu.quality_grades.triggered.connect(self._open_quality_settings)
 
         self.tabs.commits_tab.commit_selected.connect(self._show_commit_in_status)
+        self.tabs.commits_tab.checkout_requested.connect(self._checkout_commit)
+        self.tabs.commits_tab.ai_summary_requested.connect(self._describe_commit_with_ai)
 
     def _bind_tab_actions(self) -> None:
         self.tabs.overview_tab.regenerate_requested.connect(self._regenerate_overview)
@@ -429,6 +431,36 @@ class MainWindow(QMainWindow):
             f"Working tree: files={report.metrics.files_changed} +{report.metrics.lines_added} -{report.metrics.lines_deleted}",
             5_000,
         )
+
+
+    def _checkout_commit(self, commit_hash: str) -> None:
+        if not self.current_repo:
+            return
+        repo_path = Path(self.current_repo.working_path)
+        confirm = QMessageBox.question(
+            self,
+            "Checkout commit",
+            f"Переключить репозиторий на {commit_hash[:10]}?\nЭто изменит текущее состояние рабочего дерева.",
+        )
+        if confirm != QMessageBox.StandardButton.Yes:
+            return
+        try:
+            self.git_backend.checkout(repo_path, commit_hash)
+        except Exception as error:  # noqa: BLE001
+            QMessageBox.warning(self, "Checkout failed", str(error))
+            return
+        self.status.showMessage(f"Checked out: {commit_hash}", 5_000)
+        self._refresh_current()
+
+    def _describe_commit_with_ai(self, commit_hash: str) -> None:
+        if not self.current_repo:
+            return
+        repo_path = Path(self.current_repo.working_path)
+        diff_text = self.git_backend.read_commit_diff(repo_path, commit_hash)
+        backend = OllamaBackend(DEFAULT_CONFIG.ollama_url, DEFAULT_CONFIG.ollama_model)
+        result = backend.summarize_diff(diff_text)
+        self.tabs.commits_tab.set_commit_summary(commit_hash, result.summary, result.model_info)
+        self.status.showMessage(f"Описание коммита обновлено: {commit_hash[:10]}", 5_000)
 
     def _show_commit_in_status(self, commit_hash: str) -> None:
         self.status.showMessage(f"Selected commit: {commit_hash}", 4_000)
