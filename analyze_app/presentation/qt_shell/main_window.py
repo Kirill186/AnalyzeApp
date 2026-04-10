@@ -588,10 +588,25 @@ def _extract_ranks(issues: list) -> list[str]:
 def _parse_status_rows(status_lines: list[str]) -> list[dict[str, str]]:
     rows: list[dict[str, str]] = []
     for line in status_lines:
-        if len(line) < 4:
+        if len(line) < 3:
             continue
-        status = line[:2].strip() or "??"
-        raw_path = line[3:]
+        status = ""
+        raw_path = ""
+        # Expected porcelain line: XY<space>path.
+        # GitBackend._git() strips surrounding whitespace for the whole output,
+        # so the very first line can lose its leading space and become X<space>path.
+        if len(line) >= 3 and line[2] == " ":
+            status = line[:2].strip() or "??"
+            raw_path = line[3:]
+        elif len(line) >= 2 and line[1] == " ":
+            status = line[0].strip() or "??"
+            raw_path = line[2:]
+        else:
+            parts = line.split(maxsplit=1)
+            if len(parts) != 2:
+                continue
+            status = parts[0].strip() or "??"
+            raw_path = parts[1]
         path = raw_path.split(" -> ", 1)[-1].strip()
         if path.startswith('"') and path.endswith('"'):
             path = path[1:-1]
