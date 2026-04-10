@@ -51,7 +51,7 @@ body{font-family:Inter,Segoe UI,sans-serif;color:var(--text);background:radial-g
 const data = __DATA_JSON__;
 const commits = data.commits || [];
 let selected = data.selectedHash || (commits.length ? commits[0].hash : null);
-let showDetails = false;
+let showDetails = Boolean(data.showDetails);
 
 const esc = (t='') => t.replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;');
 const clip = (t='', l=88) => t.length > l ? t.slice(0,l) + '…' : t;
@@ -142,19 +142,19 @@ function paintSide(){
   document.getElementById('detailsPane').classList.toggle('visible', showDetails);
 }
 
-function onSideBackgroundClick(e){
-  const targetId = e.target.id;
-  if(targetId === 'sidePanel' || targetId === 'ribbonPane' || targetId === 'detailsPane' || targetId === 'ribbon' || targetId === 'details'){
-    showDetails = !showDetails;
-    paintSide();
+function onGraphBackgroundClick(e){
+  if(e.target.closest('.commit-card')){
+    return;
   }
+  showDetails = false;
+  paintSide();
 }
 
 paintRibbon();
 paintDetails();
 paintGraph();
 paintSide();
-document.getElementById('sidePanel').addEventListener('click', onSideBackgroundClick);
+document.getElementById('graphScroll').addEventListener('click', onGraphBackgroundClick);
 addEventListener('resize', paintGraph, {passive:true});
 </script>
 </body>

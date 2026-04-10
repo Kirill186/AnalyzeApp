@@ -36,6 +36,7 @@ class CommitsTab(QWidget):
         self._selected_hash: str | None = None
         self._commits: list[Commit] = []
         self._summary_text = ""
+        self._show_details = False
 
         self.web = QWebEngineView()
         self.page = CommitsWebPage(self.web)
@@ -51,16 +52,19 @@ class CommitsTab(QWidget):
     def set_commits(self, commits: list[Commit]) -> None:
         self._commits = commits
         self._selected_hash = commits[0].hash if commits else None
+        self._show_details = False
         if self._selected_hash:
             self.commit_selected.emit(self._selected_hash)
         self._render()
 
     def set_commit_summary(self, commit_hash: str, summary: str, model_info: str) -> None:
         self._summary_text = f"{commit_hash[:10]}\nМодель: {model_info}\n\n{summary}"
+        self._show_details = self._selected_hash == commit_hash
         self._render()
 
     def _set_selected_hash(self, commit_hash: str) -> None:
         self._selected_hash = commit_hash
+        self._show_details = True
         self.commit_selected.emit(commit_hash)
 
     def _on_ai_requested_from_web(self, commit_hash: str) -> None:
@@ -84,6 +88,7 @@ class CommitsTab(QWidget):
             "commits": serialized,
             "summary": escape_plain(self._summary_text),
             "selectedHash": self._selected_hash,
+            "showDetails": self._show_details,
         }
         template_path = Path(__file__).with_name("web_assets") / "commits.html"
         html = render_html_template(template_path, payload)
