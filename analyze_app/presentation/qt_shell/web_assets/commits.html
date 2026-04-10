@@ -50,6 +50,7 @@ body{font-family:Inter,Segoe UI,sans-serif;color:var(--text);background:radial-g
 const data = __DATA_JSON__;
 const commits = data.commits || [];
 let selected = data.selectedHash || (commits.length ? commits[0].hash : null);
+let showDetails = false;
 
 const esc = (t='') => t.replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;');
 const clip = (t='', l=88) => t.length > l ? t.slice(0,l) + '…' : t;
