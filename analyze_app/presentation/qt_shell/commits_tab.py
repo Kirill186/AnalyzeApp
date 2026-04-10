@@ -5,7 +5,7 @@ from pathlib import Path
 from PySide6.QtCore import QUrl, Signal
 from PySide6.QtWebEngineCore import QWebEnginePage
 from PySide6.QtWebEngineWidgets import QWebEngineView
-from PySide6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QVBoxLayout, QWidget
 
 from analyze_app.domain.entities import Commit
 from analyze_app.presentation.qt_shell.web_view_utils import escape_plain, render_html_template
@@ -29,7 +29,6 @@ class CommitsWebPage(QWebEnginePage):
 
 class CommitsTab(QWidget):
     commit_selected = Signal(str)
-    checkout_requested = Signal(str)
     ai_summary_requested = Signal(str)
 
     def __init__(self, parent=None) -> None:
@@ -38,17 +37,6 @@ class CommitsTab(QWidget):
         self._commits: list[Commit] = []
         self._summary_text = ""
 
-        self.checkout_btn = QPushButton("Checkout")
-        self.checkout_btn.clicked.connect(self._emit_checkout)
-        self.describe_btn = QPushButton("Описание (Ollama)")
-        self.describe_btn.clicked.connect(self._emit_ai_summary)
-
-        actions = QHBoxLayout()
-        actions.addWidget(QLabel("История коммитов"))
-        actions.addStretch()
-        actions.addWidget(self.checkout_btn)
-        actions.addWidget(self.describe_btn)
-
         self.web = QWebEngineView()
         self.page = CommitsWebPage(self.web)
         self.page.commit_selected.connect(self._set_selected_hash)
@@ -56,7 +44,7 @@ class CommitsTab(QWidget):
         self.web.setPage(self.page)
 
         root = QVBoxLayout(self)
-        root.addLayout(actions)
+        root.setContentsMargins(0, 0, 0, 0)
         root.addWidget(self.web)
         self._render()
 
@@ -74,14 +62,6 @@ class CommitsTab(QWidget):
     def _set_selected_hash(self, commit_hash: str) -> None:
         self._selected_hash = commit_hash
         self.commit_selected.emit(commit_hash)
-
-    def _emit_checkout(self) -> None:
-        if self._selected_hash:
-            self.checkout_requested.emit(self._selected_hash)
-
-    def _emit_ai_summary(self) -> None:
-        if self._selected_hash:
-            self.ai_summary_requested.emit(self._selected_hash)
 
     def _on_ai_requested_from_web(self, commit_hash: str) -> None:
         self._set_selected_hash(commit_hash)
