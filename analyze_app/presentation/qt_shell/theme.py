@@ -5,15 +5,20 @@ from PySide6.QtWidgets import QApplication
 
 APP_QSS = """
 QMainWindow {
-    background: #0B1020;
+    background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #090F1F, stop:0.55 #0A1328, stop:1 #060A14);
 }
 QWidget {
     color: #E6ECFF;
-    background: #0B1020;
+    background: transparent;
     font-size: 13px;
 }
 QMenuBar, QMenu, QTabWidget::pane, QSplitter, QScrollArea, QListWidget, QTreeWidget {
     background: #121A2B;
+}
+QTabWidget::pane {
+    border: 1px solid #2A3755;
+    border-radius: 10px;
+    background: rgba(18, 27, 45, 0.92);
 }
 QListWidget {
     border: 1px solid #2A3755;
@@ -42,7 +47,7 @@ QTabBar::tab {
 }
 QTabBar::tab:selected {
     color: #E6ECFF;
-    background: #5B8CFF;
+    background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #4D79D8, stop:1 #42B4D4);
 }
 QPushButton {
     background: #1A2438;
