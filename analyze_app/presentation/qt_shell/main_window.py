@@ -3,10 +3,15 @@ from __future__ import annotations
 import sys
 from dataclasses import dataclass
 from datetime import datetime
+import os
 import re
 from pathlib import Path
+import shlex
+import shutil
+import subprocess
 
 from PySide6.QtCore import QObject, QThread, Qt, Signal, Slot
+from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QApplication,
     QDialog,
@@ -119,6 +124,8 @@ class MainWindow(QMainWindow):
 
         self.tabs.commits_tab.commit_selected.connect(self._show_commit_in_status)
         self.tabs.commits_tab.ai_summary_requested.connect(self._describe_commit_with_ai)
+        self.tabs.workspace_tab.stage_requested.connect(self._stage_workspace_file)
+        self.tabs.workspace_tab.open_requested.connect(self._open_workspace_file)
 
     def _bind_tab_actions(self) -> None:
         self.tabs.overview_tab.regenerate_requested.connect(self._regenerate_overview)
@@ -452,8 +459,7 @@ class MainWindow(QMainWindow):
             return
         repo_path = Path(self.current_repo.working_path)
         status_lines = self.git_backend.status_porcelain(repo_path)
-        self.tabs.workspace_tab.set_files(status_lines)
-        self.tabs.workspace_tab.set_diff(self.git_backend.read_working_tree_diff(repo_path))
+        file_rows = _parse_status_rows(status_lines)
 
         use_case = WorkingTreeReportUseCase(
             self.git_backend,
@@ -465,11 +471,71 @@ class MainWindow(QMainWindow):
         try:
             report = use_case.execute(self.current_repo.repo_id, repo_path, use_cache=True)
         except Exception:  # noqa: BLE001
+            report = None
+        files_payload = self._build_workspace_files_payload(file_rows, report.issues if report else [], report.tests if report else None)
+        diff_by_file = {
+            file_row["path"]: self.git_backend.read_working_tree_diff(repo_path, file_row["path"])
+            for file_row in file_rows
+        }
+        self.tabs.workspace_tab.set_workspace_data(files_payload, diff_by_file)
+        if not report:
             return
         self.status.showMessage(
             f"Working tree: files={report.metrics.files_changed} +{report.metrics.lines_added} -{report.metrics.lines_deleted}",
             5_000,
         )
+
+    def _build_workspace_files_payload(self, file_rows: list[dict[str, str]], issues: list, tests) -> list[dict[str, object]]:
+        lint_by_file: dict[str, int] = {}
+        issues_by_file: dict[str, int] = {}
+        for issue in issues:
+            path = (issue.file or "").replace("\\", "/")
+            if not path:
+                continue
+            issues_by_file[path] = issues_by_file.get(path, 0) + 1
+            if issue.tool == "ruff":
+                lint_by_file[path] = lint_by_file.get(path, 0) + 1
+        failed_tests = tests.failed_tests if tests else []
+
+        payload: list[dict[str, object]] = []
+        for item in file_rows:
+            path = item["path"]
+            test_label = ""
+            if failed_tests and any(path in failed for failed in failed_tests):
+                test_label = "tests: failed"
+            payload.append(
+                {
+                    "path": path,
+                    "status": item["status"],
+                    "lint": lint_by_file.get(path, 0),
+                    "issues": issues_by_file.get(path, 0),
+                    "tests": test_label,
+                }
+            )
+        return payload
+
+    def _stage_workspace_file(self, file_path: str) -> None:
+        if not self.current_repo:
+            return
+        repo_path = Path(self.current_repo.working_path)
+        self.git_backend.stage_paths(repo_path, [file_path])
+        self.status.showMessage(f"Staged: {file_path}", 4_000)
+        self._refresh_working_tree()
+
+    def _open_workspace_file(self, file_path: str) -> None:
+        if not self.current_repo:
+            return
+        absolute_path = Path(self.current_repo.working_path) / file_path
+        editor = _detect_editor_command()
+        if editor:
+            subprocess.Popen([*editor, str(absolute_path)])  # noqa: S603
+            self.status.showMessage(f"Opened in editor: {file_path}", 4_000)
+            return
+        opened = QDesktopServices.openUrl(QUrl.fromLocalFile(str(absolute_path)))
+        if opened:
+            self.status.showMessage(f"Opened: {file_path}", 4_000)
+            return
+        self.status.showMessage(f"Не удалось открыть файл: {file_path}", 5_000)
 
 
     def _describe_commit_with_ai(self, commit_hash: str) -> None:
@@ -517,3 +583,31 @@ def _extract_ranks(issues: list) -> list[str]:
         if match:
             ranks.append(match.group(1))
     return ranks
+
+
+def _parse_status_rows(status_lines: list[str]) -> list[dict[str, str]]:
+    rows: list[dict[str, str]] = []
+    for line in status_lines:
+        if len(line) < 4:
+            continue
+        status = line[:2].strip() or "??"
+        raw_path = line[3:]
+        path = raw_path.split(" -> ", 1)[-1].strip()
+        if path.startswith('"') and path.endswith('"'):
+            path = path[1:-1]
+        if not path:
+            continue
+        rows.append({"status": status, "path": path})
+    return rows
+
+
+def _detect_editor_command() -> list[str] | None:
+    env_value = os.environ.get("ANALYZEAPP_EDITOR") or os.environ.get("EDITOR")
+    if env_value:
+        parts = shlex.split(env_value)
+        if parts:
+            return parts
+    for candidate in ("code", "zed", "subl", "nvim", "vim"):
+        if shutil.which(candidate):
+            return [candidate]
+    return None

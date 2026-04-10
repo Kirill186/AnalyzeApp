@@ -1,13 +1,182 @@
-<!doctype html><html lang="ru"><head><meta charset="utf-8" />
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
 <style>
-body{font-family:Inter,Segoe UI,sans-serif;background:#0a1020;color:#eaf0ff;margin:0;padding:16px}
-.grid{display:grid;grid-template-columns:320px 1fr;gap:12px}
-.panel{background:#121d37;border:1px solid #2c3f6b;border-radius:12px;padding:12px}
-.file{padding:6px 0;border-bottom:1px solid #25385f;font-family:ui-monospace,monospace;font-size:12px}
-pre{background:#0b1428;border-radius:8px;padding:10px;overflow:auto;max-height:70vh}
-</style></head><body><div id="app"></div>
+:root{color-scheme:dark;--bg:#070d19;--panel:#101b33;--stroke:#2a436f;--accent:#74a8ff;--text:#eaf1ff;--muted:#9bb1d7;--add:#143c2a;--del:#4a1e2b}
+html,body{height:100%;margin:0}
+*{box-sizing:border-box}
+body{font-family:Inter,Segoe UI,sans-serif;background:radial-gradient(1200px 800px at 18% 5%, #16346a, #081021 52%, #04070d);color:var(--text);padding:10px}
+.layout{display:grid;grid-template-columns:330px minmax(0,1fr);gap:10px;height:100%}
+.panel{display:flex;flex-direction:column;min-height:0;border:1px solid var(--stroke);border-radius:14px;background:linear-gradient(170deg, rgba(19,31,58,.85), rgba(10,16,31,.9));padding:10px}
+.title{margin:0 0 8px;font-size:13px;font-weight:700}
+.toolbar{display:flex;gap:8px;align-items:center;margin-bottom:8px}
+button{border:1px solid #446ca8;background:#1a3057;color:#dce9ff;border-radius:10px;padding:7px 10px;font-size:12px;cursor:pointer}
+button.active{border-color:#8cb7ff;background:#23477f}
+button:disabled{opacity:.45;cursor:not-allowed}
+.file-list{overflow:auto;border:1px solid #20365c;border-radius:10px;background:rgba(8,14,25,.75)}
+.file{padding:8px 10px;border-bottom:1px solid #1a2e52;cursor:pointer}
+.file:last-child{border-bottom:0}
+.file:hover{background:rgba(116,168,255,.1)}
+.file.selected{background:rgba(116,168,255,.2);box-shadow:inset 0 0 0 1px #6ea6ff}
+.row{display:flex;justify-content:space-between;gap:8px;align-items:center}
+.path{font-family:ui-monospace,monospace;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.status{font-size:11px;color:#d2e1ff;background:#1d3459;border:1px solid #3f629d;border-radius:999px;padding:2px 8px}
+.ind{display:flex;gap:6px;margin-top:6px;flex-wrap:wrap}
+.pill{font-size:10px;padding:2px 7px;border-radius:999px;border:1px solid #3a5f99;color:#b9d4ff;background:#172c4f}
+.pill.warn{border-color:#a67d47;background:#43321b;color:#f8d59d}
+.pill.bad{border-color:#9e4568;background:#472131;color:#ffd1e0}
+.empty{padding:12px;color:var(--muted)}
+.diff-wrap{overflow:auto;border:1px solid #20365c;border-radius:10px;background:#081222;flex:1;min-height:0}
+pre{margin:0;padding:12px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;line-height:1.35}
+.line{white-space:pre}
+.add{background:rgba(20,60,42,.9)} .del{background:rgba(74,30,43,.9)} .ctx{color:#b8cae9} .hdr{color:#8fb4ff}
+table{width:100%;border-collapse:collapse;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px}
+td{vertical-align:top;padding:0}
+.ln{width:52px;text-align:right;color:#7d9ac8;padding:0 8px;border-right:1px solid #22395f;user-select:none}
+.cell{padding:0 8px;white-space:pre}
+.split tr{border-bottom:1px solid #10213d}
+.split .l{border-right:1px solid #22395f}
+</style>
+</head>
+<body>
+<div class="layout">
+  <section class="panel">
+    <h3 class="title">Измененные файлы</h3>
+    <div id="files" class="file-list"></div>
+  </section>
+  <section class="panel">
+    <h3 id="header" class="title">Diff</h3>
+    <div class="toolbar">
+      <button id="splitBtn">Split</button>
+      <button id="unifiedBtn">Unified</button>
+      <button id="stageBtn">Stage file</button>
+      <button id="openBtn">Open in editor</button>
+    </div>
+    <div id="diff" class="diff-wrap"></div>
+  </section>
+</div>
 <script>
 const data = __DATA_JSON__;
-const files = data.files.map(f=>`<div class="file">${f}</div>`).join('');
-document.getElementById('app').innerHTML = `<h2>Workspace</h2><div class="grid"><section class="panel"><h3>Измененные файлы</h3>${files||'Нет изменений'}</section><section class="panel"><h3>Diff preview</h3><pre>${data.diff}</pre></section></div>`;
-</script></body></html>
+const files = Array.isArray(data.files) ? data.files : [];
+let selected = data.selectedFile || (files[0] ? files[0].path : null);
+let mode = data.mode === 'unified' ? 'unified' : 'split';
+const diffText = data.diffText || '';
+
+const esc = (t='') => t.replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;');
+const enc = encodeURIComponent;
+
+function send(action, extra=''){
+  const file = selected ? `file=${enc(selected)}` : '';
+  const base = `action=${action}`;
+  const q = [base, file, extra].filter(Boolean).join('&');
+  window.location.href = `analyzeapp://workspace?${q}`;
+}
+
+function renderFiles(){
+  const root = document.getElementById('files');
+  if(!files.length){
+    root.innerHTML = '<div class="empty">Рабочее дерево чистое.</div>';
+    return;
+  }
+  root.innerHTML = files.map((f) => {
+    const sel = f.path === selected ? 'selected' : '';
+    const indicators = [];
+    if(typeof f.lint === 'number') indicators.push(`<span class="pill ${f.lint>0?'warn':''}">lint: ${f.lint}</span>`);
+    if(typeof f.issues === 'number') indicators.push(`<span class="pill ${f.issues>0?'bad':''}">issues: ${f.issues}</span>`);
+    if(typeof f.tests === 'string' && f.tests) indicators.push(`<span class="pill">${esc(f.tests)}</span>`);
+    return `<div class="file ${sel}" data-path="${enc(f.path)}">
+      <div class="row"><span class="path">${esc(f.path)}</span><span class="status">${esc(f.status || 'M')}</span></div>
+      <div class="ind">${indicators.join('')}</div>
+    </div>`;
+  }).join('');
+}
+
+function pick(path){
+  selected = path;
+  send('select');
+}
+
+function parseUnified(text){
+  const rows = [];
+  const lines = text.split('\n');
+  let oldLn = 0, newLn = 0;
+  for(const raw of lines){
+    if(raw.startsWith('@@')){
+      const m = raw.match(/^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/);
+      if(m){ oldLn = Number(m[1]); newLn = Number(m[2]); }
+      rows.push({kind:'hdr', leftLn:'', rightLn:'', left:raw, right:raw});
+      continue;
+    }
+    if(raw.startsWith('---') || raw.startsWith('+++') || raw.startsWith('diff --git') || raw.startsWith('index ')){
+      rows.push({kind:'hdr', leftLn:'', rightLn:'', left:raw, right:raw});
+      continue;
+    }
+    if(raw.startsWith('+') && !raw.startsWith('+++')){
+      rows.push({kind:'add', leftLn:'', rightLn:newLn++, left:'', right:raw});
+      continue;
+    }
+    if(raw.startsWith('-') && !raw.startsWith('---')){
+      rows.push({kind:'del', leftLn:oldLn++, rightLn:'', left:raw, right:''});
+      continue;
+    }
+    rows.push({kind:'ctx', leftLn:oldLn ? oldLn++ : '', rightLn:newLn ? newLn++ : '', left:raw, right:raw});
+  }
+  return rows;
+}
+
+function renderUnified(rows){
+  return `<pre>${rows.map((r) => {
+    const klass = r.kind === 'add' ? 'add' : r.kind === 'del' ? 'del' : r.kind === 'hdr' ? 'hdr' : 'ctx';
+    const line = r.kind === 'add' ? r.right : r.kind === 'del' ? r.left : r.left;
+    return `<div class="line ${klass}">${esc(line)}</div>`;
+  }).join('')}</pre>`;
+}
+
+function renderSplit(rows){
+  return `<table class="split"><tbody>${rows.map((r) => `
+    <tr class="${r.kind}">
+      <td class="ln">${r.leftLn || ''}</td><td class="cell l">${esc(r.left || '')}</td>
+      <td class="ln">${r.rightLn || ''}</td><td class="cell">${esc(r.right || '')}</td>
+    </tr>`).join('')}</tbody></table>`;
+}
+
+function renderDiff(){
+  const root = document.getElementById('diff');
+  const hdr = document.getElementById('header');
+  hdr.textContent = selected ? `Diff • ${selected}` : 'Diff';
+  if(!selected || !diffText){
+    root.innerHTML = '<div class="empty">Выберите файл для просмотра diff.</div>';
+    return;
+  }
+  const rows = parseUnified(diffText);
+  root.innerHTML = mode === 'unified' ? renderUnified(rows) : renderSplit(rows);
+}
+
+function bindToolbar(){
+  const splitBtn = document.getElementById('splitBtn');
+  const unifiedBtn = document.getElementById('unifiedBtn');
+  splitBtn.classList.toggle('active', mode === 'split');
+  unifiedBtn.classList.toggle('active', mode === 'unified');
+  splitBtn.onclick = () => { mode = 'split'; send('mode', 'value=split'); };
+  unifiedBtn.onclick = () => { mode = 'unified'; send('mode', 'value=unified'); };
+  document.getElementById('stageBtn').onclick = () => send('stage');
+  document.getElementById('openBtn').onclick = () => send('open');
+  document.getElementById('stageBtn').disabled = !selected;
+  document.getElementById('openBtn').disabled = !selected;
+}
+
+renderFiles();
+renderDiff();
+bindToolbar();
+document.getElementById('files').addEventListener('click', (event) => {
+  const row = event.target.closest('.file');
+  if(!row){ return; }
+  const path = decodeURIComponent(row.getAttribute('data-path') || '');
+  if(!path){ return; }
+  pick(path);
+});
+</script>
+</body>
+</html>
