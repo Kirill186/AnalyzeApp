@@ -50,8 +50,11 @@ class GitBackend:
         output = self._git(["show", "--numstat", "--format=", commit_hash], repo_path)
         return self._parse_numstat(output)
 
-    def read_working_tree_diff(self, repo_path: Path) -> str:
-        return self._git(["diff", "HEAD"], repo_path)
+    def read_working_tree_diff(self, repo_path: Path, file_path: str | None = None) -> str:
+        args = ["diff", "HEAD"]
+        if file_path:
+            args.extend(["--", file_path])
+        return self._git(args, repo_path)
 
     def read_working_tree_file_changes(self, repo_path: Path) -> list[FileChange]:
         output = self._git(["diff", "--numstat", "HEAD"], repo_path)
