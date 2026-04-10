@@ -5,7 +5,7 @@ from pathlib import Path
 from PySide6.QtCore import QUrl, Signal
 from PySide6.QtWebEngineCore import QWebEnginePage
 from PySide6.QtWebEngineWidgets import QWebEngineView
-from PySide6.QtWidgets import QLabel, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QVBoxLayout, QWidget
 
 from analyze_app.domain.entities import Commit
 from analyze_app.presentation.qt_shell.web_view_utils import escape_plain, render_html_template
@@ -37,8 +37,6 @@ class CommitsTab(QWidget):
         self._commits: list[Commit] = []
         self._summary_text = ""
 
-        title = QLabel("История коммитов")
-
         self.web = QWebEngineView()
         self.page = CommitsWebPage(self.web)
         self.page.commit_selected.connect(self._set_selected_hash)
@@ -46,7 +44,7 @@ class CommitsTab(QWidget):
         self.web.setPage(self.page)
 
         root = QVBoxLayout(self)
-        root.addWidget(title)
+        root.setContentsMargins(0, 0, 0, 0)
         root.addWidget(self.web)
         self._render()
 

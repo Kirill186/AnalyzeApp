@@ -6,60 +6,39 @@
 <style>
 :root{
   color-scheme:dark;
-  --bg:#060b19;
   --panel:#111b33;
   --stroke:#294574;
   --text:#eff4ff;
   --muted:#9fb4d6;
   --accent:#74a8ff;
-  --accent2:#62ffd0;
 }
-html,body{height:100%}
+html,body{height:100%;margin:0}
 *{box-sizing:border-box}
 body{
-  margin:0;
   font-family:Inter,Segoe UI,sans-serif;
   color:var(--text);
   background:radial-gradient(1000px 800px at 15% 5%, #163163, #090f1e 45%, #050912);
-  padding:14px;
+  padding:10px;
 }
 .layout{
   display:grid;
-  grid-template-columns: minmax(700px,1fr) 360px;
-  gap:14px;
-  min-height:calc(100vh - 28px);
+  grid-template-columns:minmax(0,1fr) 350px;
+  gap:10px;
+  height:100%;
+  min-height:0;
 }
 .panel{
+  min-height:0;
   border:1px solid var(--stroke);
-  border-radius:16px;
+  border-radius:14px;
   background:linear-gradient(170deg, rgba(19,31,58,.85), rgba(9,14,28,.84));
-  backdrop-filter:blur(10px);
 }
-.graph-wrap{padding:12px;display:flex;flex-direction:column;gap:10px;}
-.title{margin:0;font-size:14px;font-weight:700;color:#cfe0ff}
-#graph{
-  width:100%;
-  height:calc(100vh - 90px);
-  border-radius:12px;
-  border:1px solid #223a64;
-  background:linear-gradient(180deg, rgba(7,12,22,.95), rgba(7,15,30,.8));
-}
-.side{padding:10px;overflow:hidden;display:flex;flex-direction:column}
-.ribbon{
-  overflow:auto;
-  display:flex;
-  flex-direction:column;
-  gap:8px;
-  padding-right:4px;
-  max-height:calc(100vh - 90px);
-}
-.r-item{
-  border:1px solid #2d4772;
-  border-radius:12px;
-  padding:10px;
-  cursor:pointer;
-  background:rgba(255,255,255,.02);
-}
+.graph-wrap{padding:10px;display:flex;flex-direction:column;gap:8px;min-height:0;}
+.title{margin:0;font-size:13px;font-weight:700;color:#cfe0ff}
+#graph{width:100%;flex:1;min-height:0;border-radius:12px;border:1px solid #223a64;background:linear-gradient(180deg, rgba(7,12,22,.95), rgba(7,15,30,.8));}
+.side{padding:10px;display:flex;flex-direction:column;min-height:0}
+.ribbon{overflow:auto;display:flex;flex-direction:column;gap:8px;padding-right:4px;flex:1;min-height:0}
+.r-item{border:1px solid #2d4772;border-radius:12px;padding:10px;cursor:pointer;background:rgba(255,255,255,.02)}
 .r-item:hover{border-color:#5f87ca}
 .r-item.active{border-color:var(--accent); box-shadow:0 0 0 1px rgba(116,168,255,.45) inset;}
 .hash{font-size:12px;font-weight:700;color:#a9c8ff}
@@ -70,15 +49,11 @@ body{
 .badge{display:inline-block;padding:4px 9px;border-radius:999px;background:#1a2d50;border:1px solid #3d609e;font-size:11px;color:#b8d0ff}
 .desc{margin-top:10px;white-space:pre-wrap;line-height:1.45;color:#dce7ff}
 .action{margin-top:14px;padding:10px;border-radius:12px;border:1px solid #3b5f9f;background:rgba(52,92,168,.14);font-size:13px}
-.action button{margin-top:8px;padding:8px 12px;border-radius:10px;border:1px solid #6990d5;background:#1a3057;color:#ddebff;cursor:pointer}
-.action button:hover{background:#25457a}
-.back{margin-top:12px;padding:7px 10px;border:1px solid #3d5f97;border-radius:10px;background:transparent;color:#bdd3ff;cursor:pointer}
+.action button,.back{margin-top:8px;padding:8px 12px;border-radius:10px;border:1px solid #6990d5;background:#1a3057;color:#ddebff;cursor:pointer}
+.back{background:transparent;border-color:#3d5f97;color:#bdd3ff}
 .empty{color:var(--muted)}
 .commit-card{cursor:pointer}
-@media (max-width:1180px){
-  .layout{grid-template-columns:1fr}
-  #graph,.ribbon{height:420px;max-height:420px}
-}
+@media (max-width:860px){.layout{grid-template-columns:1fr;grid-template-rows:1fr 280px}}
 </style>
 </head>
 <body>
@@ -94,8 +69,7 @@ const clip = (t='', l=88) => t.length > l ? t.slice(0,l) + '…' : t;
 
 function render(){
   const commit = commits.find(c => c.hash === selected);
-
-  const ribbon = commits.map((c, idx) => `
+  const ribbon = commits.map((c) => `
     <div class="r-item ${c.hash===selected?'active':''}" onclick="pick('${c.hash}', true)">
       <div class="hash">${esc(c.shortHash)}</div>
       <div class="meta">${esc(c.author)} • ${esc(c.date)}</div>
@@ -107,8 +81,7 @@ function render(){
     <h3 style="margin:10px 0 4px">${esc(commit.message || '(без сообщения)')}</h3>
     <div class="meta">${esc(commit.author)} • ${esc(commit.date)}</div>
     <div class="desc">${esc(commit.description || 'Описание пока не сгенерировано.')}</div>
-    <div class="action">
-      Предложение: сделать AI-обзор этого коммита в AnalyzeApp.
+    <div class="action">Предложение: сделать AI-обзор этого коммита в AnalyzeApp.
       <br/><button onclick="askAi('${commit.hash}')">Сделать AI-обзор</button>
     </div>
     <button class="back" onclick="toRibbon()">← Вернуться к ленте</button>`;
@@ -125,66 +98,49 @@ function render(){
         <div class="info ${showDetails?'open':''}">${info}</div>
       </section>
     </div>`;
-
   drawGraph();
 }
 
-function pick(hash, openInfo=false){
-  selected = hash;
-  showDetails = openInfo;
-  render();
-  window.location.href = `analyzeapp://select/${hash}`;
-}
-
-function toRibbon(){
-  showDetails = false;
-  render();
-}
-
-function askAi(hash){
-  window.location.href = `analyzeapp://ai/${hash}`;
-}
+function pick(hash, openInfo=false){ selected = hash; showDetails = openInfo; render(); window.location.href = `analyzeapp://select/${hash}`; }
+function toRibbon(){ showDetails = false; render(); }
+function askAi(hash){ window.location.href = `analyzeapp://ai/${hash}`; }
 
 function drawGraph(){
   const svg = document.getElementById('graph');
   if(!svg) return;
-  const w = svg.clientWidth;
-  const h = svg.clientHeight;
+  const w = Math.max(400, svg.clientWidth);
+  const h = Math.max(220, svg.clientHeight);
   svg.setAttribute('viewBox', `0 0 ${w} ${h}`);
 
-  const rows = Math.max(commits.length, 1);
-  const laneCount = Math.min(4, Math.max(2, Math.ceil(Math.sqrt(rows/2))));
-  const laneX = i => 110 + (i * ((w-220)/Math.max(1,laneCount-1)));
-  const stepY = Math.max(84, (h-100) / rows);
+  const count = Math.max(commits.length, 1);
+  const laneCount = Math.min(4, Math.max(2, Math.ceil(Math.sqrt(count/2))));
+  const laneX = i => 105 + (i * ((w-210)/Math.max(1,laneCount-1)));
+  const stepY = Math.max(72, (h-90) / count);
 
   let branch = 0;
   const nodes = commits.map((c, i) => {
-    if(i > 0 && i % 5 === 0){ branch = (branch + 1) % laneCount; }
-    return { ...c, x: laneX(branch), y: 56 + i*stepY, lane: branch };
+    if(i > 0 && i % 5 === 0) branch = (branch + 1) % laneCount;
+    return { ...c, x: laneX(branch), y: 45 + i*stepY };
   });
 
-  const lines = [];
-  for(let i=0;i<nodes.length-1;i++){
-    const a=nodes[i], b=nodes[i+1];
+  const lines = nodes.slice(0,-1).map((a, i) => {
+    const b = nodes[i+1];
     const color = i%2===0 ? '#79afff' : '#67ffd3';
-    lines.push(`<path d="M ${a.x} ${a.y+18} C ${a.x} ${(a.y+b.y)/2}, ${b.x} ${(a.y+b.y)/2}, ${b.x} ${b.y-18}" stroke="${color}" stroke-width="2" fill="none" opacity="0.8"/>`);
-  }
+    return `<path d="M ${a.x} ${a.y+18} C ${a.x} ${(a.y+b.y)/2}, ${b.x} ${(a.y+b.y)/2}, ${b.x} ${b.y-18}" stroke="${color}" stroke-width="2" fill="none" opacity="0.8"/>`;
+  }).join('');
 
   const cards = nodes.map((n) => {
     const active = n.hash===selected;
-    const x=n.x-96, y=n.y-22;
-    const fill = active ? 'rgba(90,146,235,.25)' : 'rgba(12,24,48,.85)';
-    const stroke = active ? '#7cb2ff' : '#36578d';
-    return `
-      <g class="commit-card" onclick="pick('${n.hash}', true)">
-        <rect x="${x}" y="${y}" rx="12" ry="12" width="192" height="44" fill="${fill}" stroke="${stroke}"/>
-        <circle cx="${x+16}" cy="${y+22}" r="5" fill="${active ? '#74ffd2' : '#a9c8ff'}"/>
-        <text x="${x+30}" y="${y+19}" font-size="11" fill="#dce8ff" font-weight="700">${esc(n.shortHash)}</text>
-        <text x="${x+30}" y="${y+33}" font-size="10" fill="#9fb8dd">${esc(clip(n.message, 24))}</text>
-      </g>`;
+    const x=n.x-94, y=n.y-22;
+    return `<g class="commit-card" onclick="pick('${n.hash}', true)">
+      <rect x="${x}" y="${y}" rx="12" ry="12" width="188" height="44" fill="${active ? 'rgba(90,146,235,.25)' : 'rgba(12,24,48,.85)'}" stroke="${active ? '#7cb2ff' : '#36578d'}"/>
+      <circle cx="${x+16}" cy="${y+22}" r="5" fill="${active ? '#74ffd2' : '#a9c8ff'}"/>
+      <text x="${x+30}" y="${y+19}" font-size="11" fill="#dce8ff" font-weight="700">${esc(n.shortHash)}</text>
+      <text x="${x+30}" y="${y+33}" font-size="10" fill="#9fb8dd">${esc(clip(n.message, 24))}</text>
+    </g>`;
   }).join('');
 
-  svg.innerHTML = `${lines.join('')} ${cards}`;
+  svg.innerHTML = `${lines}${cards}`;
 }
 
 render();
