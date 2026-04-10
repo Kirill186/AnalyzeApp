@@ -22,20 +22,26 @@ class GitBackend:
         return Path(source).resolve()
 
     def list_commits(self, repo_path: Path, limit: int = 20) -> list[Commit]:
-        fmt = "%H|%an|%aI|%s"
+        fmt = "%H|%P|%an|%aI|%s"
         output = self._git(["log", f"--max-count={limit}", f"--pretty=format:{fmt}"], repo_path)
         commits: list[Commit] = []
         for row in output.splitlines():
-            commit_hash, author, authored_at, message = row.split("|", 3)
+            commit_hash, parents_raw, author, authored_at, message = row.split("|", 4)
+            parents = tuple(parent for parent in parents_raw.split() if parent)
             commits.append(
                 Commit(
                     hash=commit_hash,
                     author=author,
                     authored_at=datetime.fromisoformat(authored_at.replace("Z", "+00:00")),
                     message=message,
+                    parents=parents,
                 )
             )
         return commits
+
+
+    def checkout(self, repo_path: Path, ref: str) -> None:
+        self._git(["checkout", ref], repo_path)
 
     def read_commit_diff(self, repo_path: Path, commit_hash: str) -> str:
         return self._git(["show", "--format=", commit_hash], repo_path)
