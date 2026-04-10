@@ -14,8 +14,9 @@ body{font-family:Inter,Segoe UI,sans-serif;color:var(--text);background:radial-g
 .graph-shell{height:100%;display:flex;flex-direction:column;min-height:0}
 .graph-scroll{flex:1;min-height:0;overflow:auto;border:1px solid #223a64;border-radius:12px;background:linear-gradient(180deg, rgba(7,12,22,.95), rgba(7,15,30,.8));padding:8px}
 #graph{display:block;width:100%;min-width:680px}
-.side{display:grid;grid-template-rows:minmax(220px,1fr) minmax(220px,1fr);gap:10px;min-height:0}
-.ribbon-wrap,.details-wrap{min-height:0;display:flex;flex-direction:column}
+.side{min-height:0;display:flex;flex-direction:column}
+.pane{min-height:0;display:none;flex:1;flex-direction:column}
+.pane.visible{display:flex}
 .ribbon{overflow:auto;display:flex;flex-direction:column;gap:8px;padding-right:4px;flex:1;min-height:0}
 .r-item{border:1px solid #2d4772;border-radius:12px;padding:10px;cursor:pointer;background:rgba(255,255,255,.02)}
 .r-item:hover{border-color:#5f87ca}.r-item.active{border-color:var(--accent);box-shadow:0 0 0 1px rgba(116,168,255,.45) inset}
@@ -26,7 +27,7 @@ body{font-family:Inter,Segoe UI,sans-serif;color:var(--text);background:radial-g
 .action{margin-top:14px;padding:10px;border-radius:12px;border:1px solid #3b5f9f;background:rgba(52,92,168,.14);font-size:13px}
 .action button{margin-top:8px;padding:8px 12px;border-radius:10px;border:1px solid #6990d5;background:#1a3057;color:#ddebff;cursor:pointer}
 .empty{color:var(--muted)}.commit-card{cursor:pointer}
-@media (max-width:860px){.layout{grid-template-columns:1fr;grid-template-rows:1fr 420px}.side{grid-template-rows:1fr 1fr}}
+@media (max-width:860px){.layout{grid-template-columns:1fr;grid-template-rows:1fr 420px}}
 </style>
 </head>
 <body>
@@ -35,12 +36,12 @@ body{font-family:Inter,Segoe UI,sans-serif;color:var(--text);background:radial-g
     <h3 class="title">Tree / Graph коммитов</h3>
     <div id="graphScroll" class="graph-scroll"><svg id="graph"></svg></div>
   </section>
-  <section class="panel side">
-    <div class="ribbon-wrap">
+  <section id="sidePanel" class="panel side">
+    <div id="ribbonPane" class="pane">
       <h3 class="title">Вертикальная лента коммитов</h3>
       <div id="ribbon" class="ribbon"></div>
     </div>
-    <div class="details-wrap">
+    <div id="detailsPane" class="pane">
       <h3 class="title">Информация о коммите</h3>
       <div id="details" class="details"></div>
     </div>
@@ -57,9 +58,11 @@ const clip = (t='', l=88) => t.length > l ? t.slice(0,l) + '…' : t;
 
 function pick(hash){
   selected = hash;
+  showDetails = true;
   paintRibbon();
   paintDetails();
   paintGraph();
+  paintSide();
   window.location.href = `analyzeapp://select/${hash}`;
 }
 
@@ -134,9 +137,24 @@ function paintGraph(){
   wrap.scrollLeft = oldLeft;
 }
 
+function paintSide(){
+  document.getElementById('ribbonPane').classList.toggle('visible', !showDetails);
+  document.getElementById('detailsPane').classList.toggle('visible', showDetails);
+}
+
+function onSideBackgroundClick(e){
+  const targetId = e.target.id;
+  if(targetId === 'sidePanel' || targetId === 'ribbonPane' || targetId === 'detailsPane' || targetId === 'ribbon' || targetId === 'details'){
+    showDetails = !showDetails;
+    paintSide();
+  }
+}
+
 paintRibbon();
 paintDetails();
 paintGraph();
+paintSide();
+document.getElementById('sidePanel').addEventListener('click', onSideBackgroundClick);
 addEventListener('resize', paintGraph, {passive:true});
 </script>
 </body>
