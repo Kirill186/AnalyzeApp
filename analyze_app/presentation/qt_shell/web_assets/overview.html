@@ -39,6 +39,9 @@ body{
 .name{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.09em}
 .grade{font-size:30px;font-weight:800;line-height:1;margin-top:6px}
 .val{font-size:13px;color:#d5e0fb;margin-top:8px}
+.loader{display:inline-block;width:24px;height:24px;border:3px solid rgba(234,240,255,.22);border-top-color:#74a8ff;border-radius:50%;animation:spin .8s linear infinite}
+.metric.loading .grade{height:30px;display:flex;align-items:center}
+@keyframes spin{to{transform:rotate(360deg)}}
 .panel{background:var(--glass);border:1px solid var(--stroke);border-radius:16px;padding:16px;margin-top:16px}
 .panel h3{margin:0 0 10px 0;font-size:16px}
 .content{line-height:1.5}
@@ -67,10 +70,11 @@ function gradeColor(grade){
 
 const metrics = data.metrics.map(m => {
   const color = gradeColor(m.grade);
+  const loading = Boolean(m.loading);
   return `
-  <article class="metric">
+  <article class="metric ${loading ? 'loading' : ''}">
     <div class="name">${m.label}</div>
-    <div class="grade" style="color:${color}">${m.grade}</div>
+    <div class="grade" style="color:${color}">${loading ? '<span class="loader"></span>' : m.grade}</div>
     <div class="val">${m.value}</div>
   </article>`;
 }).join('');

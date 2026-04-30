@@ -1,0 +1,8 @@
+Metadata-Version: 2.4
+Name: analyze-app
+Version: 0.1.0
+Summary: AnalyzeApp MVP tooling
+Requires-Python: >=3.10
+Requires-Dist: ollama>=0.4.0
+Requires-Dist: PySide6>=6.7.0
+Requires-Dist: markdown>=3.6

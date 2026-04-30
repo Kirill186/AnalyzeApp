@@ -29,11 +29,13 @@ class ProjectMapTab(QWidget):
 
         self._nodes: list[dict[str, str | int]] = []
         self._edges: list[dict[str, str]] = []
+        self._loading = False
 
         self.mode_combo.currentTextChanged.connect(self._render_current_state)
         self._render_current_state()
 
     def set_project_map(self, graph: ProjectGraph) -> None:
+        self._loading = False
         self._nodes = [
             {
                 "id": node.node_id,
@@ -54,6 +56,18 @@ class ProjectMapTab(QWidget):
         ]
         self._render_current_state()
 
+    def set_loading(self) -> None:
+        self._loading = True
+        self._nodes = []
+        self._edges = []
+        self._render_current_state()
+
+    def clear(self) -> None:
+        self._loading = False
+        self._nodes = []
+        self._edges = []
+        self._render_current_state()
+
     def set_mode(self, mode: str) -> None:
         index = self.mode_combo.findText(mode)
         if index < 0:
@@ -70,6 +84,7 @@ class ProjectMapTab(QWidget):
                 "nodes": self._nodes,
                 "edges": self._edges,
                 "mode": self.mode_combo.currentText(),
+                "loading": self._loading,
             },
         )
         self.web.setHtml(html, QUrl.fromLocalFile(str(template_path.parent)))

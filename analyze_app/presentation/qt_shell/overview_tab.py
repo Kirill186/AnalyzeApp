@@ -18,24 +18,14 @@ class OverviewTab(QWidget):
         ("tests", "Тесты"),
         ("complexity", "Сложность"),
         ("maintainability", "Поддержка"),
-        ("dead_code", "Мёртвый код"),
+        ("dead_code", "Мертвый код"),
         ("duplication", "Дубли"),
         ("ai_signal", "AI-сигнал"),
     ]
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
-        self._state = {
-            "title": "Выберите репозиторий",
-            "filesCount": "—",
-            "loc": "—",
-            "summaryHtml": "<p class='muted'>Описание пока отсутствует</p>",
-            "readmeHtml": "<p class='muted'>README отсутствует</p>",
-            "metrics": [
-                {"label": label, "grade": "—", "value": "—", "threshold": ""}
-                for _, label in self.METRICS_ORDER
-            ],
-        }
+        self._state = self._empty_state()
 
         self.regenerate_btn = QPushButton("Regenerate")
         self.regenerate_btn.clicked.connect(self.regenerate_requested.emit)
@@ -49,6 +39,35 @@ class OverviewTab(QWidget):
         root = QVBoxLayout(self)
         root.addLayout(toolbar)
         root.addWidget(self.web)
+        self._render()
+
+    def _empty_state(self) -> dict[str, object]:
+        return {
+            "title": "Выберите репозиторий",
+            "filesCount": "—",
+            "loc": "—",
+            "summaryHtml": "<p class='muted'>Описание пока отсутствует</p>",
+            "readmeHtml": "<p class='muted'>README отсутствует</p>",
+            "metrics": [
+                {"label": label, "grade": "—", "value": "—", "threshold": "", "loading": False}
+                for _, label in self.METRICS_ORDER
+            ],
+        }
+
+    def reset(self) -> None:
+        self._state = self._empty_state()
+        self._render()
+
+    def set_loading(self, title: str) -> None:
+        self._state["title"] = title
+        self._state["filesCount"] = "..."
+        self._state["loc"] = "..."
+        self._state["summaryHtml"] = "<p class='muted'>Анализ выполняется...</p>"
+        self._state["readmeHtml"] = "<p class='muted'>Анализ выполняется...</p>"
+        self._state["metrics"] = [
+            {"label": label, "grade": "", "value": "Анализ выполняется", "threshold": "", "loading": True}
+            for _, label in self.METRICS_ORDER
+        ]
         self._render()
 
     def set_summary_markdown(self, summary: str) -> None:
@@ -67,7 +86,7 @@ class OverviewTab(QWidget):
         for metric_name, label in self.METRICS_ORDER:
             grade, value, threshold = metrics.get(metric_name, ("—", "—", ""))
             self._state["metrics"].append(
-                {"label": label, "grade": grade, "value": value, "threshold": threshold}
+                {"label": label, "grade": grade, "value": value, "threshold": threshold, "loading": False}
             )
         self._render()
 
@@ -84,7 +103,7 @@ class OverviewTab(QWidget):
     def _render(self) -> None:
         template_path = Path(__file__).with_name("web_assets") / "overview.html"
         html = render_html_template(template_path, self._state)
-        self.web.setHtml(html, QUrl.fromLocalFile(str(template_path.parent)) )
+        self.web.setHtml(html, QUrl.fromLocalFile(str(template_path.parent)))
 
 
 def _find_readme_candidates(repo_path: Path) -> list[Path]:

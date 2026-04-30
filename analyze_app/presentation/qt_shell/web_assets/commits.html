@@ -27,6 +27,8 @@ body{font-family:Inter,Segoe UI,sans-serif;color:var(--text);background:radial-g
 .action{margin-top:14px;padding:10px;border-radius:12px;border:1px solid #3b5f9f;background:rgba(52,92,168,.14);font-size:13px}
 .action button{margin-top:8px;padding:8px 12px;border-radius:10px;border:1px solid #6990d5;background:#1a3057;color:#ddebff;cursor:pointer}
 .empty{color:var(--muted)}.commit-card{cursor:pointer}
+.loader{display:inline-block;width:18px;height:18px;border:3px solid rgba(239,244,255,.22);border-top-color:var(--accent);border-radius:50%;animation:spin .8s linear infinite;vertical-align:middle;margin-right:8px}
+@keyframes spin{to{transform:rotate(360deg)}}
 @media (max-width:860px){.layout{grid-template-columns:1fr;grid-template-rows:1fr 420px}}
 </style>
 </head>
@@ -50,6 +52,7 @@ body{font-family:Inter,Segoe UI,sans-serif;color:var(--text);background:radial-g
 <script>
 const data = __DATA_JSON__;
 const commits = data.commits || [];
+const loading = Boolean(data.loading);
 let selected = data.selectedHash || (commits.length ? commits[0].hash : null);
 let showDetails = Boolean(data.showDetails);
 
@@ -71,6 +74,10 @@ function askAi(hash){ window.location.href = `analyzeapp://ai/${hash}`; }
 function paintRibbon(){
   const el = document.getElementById('ribbon');
   const top = el.scrollTop;
+  if(loading){
+    el.innerHTML = '<div class="empty"><span class="loader"></span>Loading commits...</div>';
+    return;
+  }
   el.innerHTML = commits.map((c) => `
     <div class="r-item ${c.hash===selected?'active':''}" onclick="pick('${c.hash}')">
       <div class="hash">${esc(c.shortHash)}</div>
@@ -82,6 +89,10 @@ function paintRibbon(){
 
 function paintDetails(){
   const el = document.getElementById('details');
+  if(loading){
+    el.innerHTML = '<div class="empty"><span class="loader"></span>Loading repository data...</div>';
+    return;
+  }
   const commit = commits.find(c => c.hash === selected);
   if(!commit){ el.innerHTML = '<div class="empty">Выберите коммит на графе или в ленте.</div>'; return; }
   el.innerHTML = `

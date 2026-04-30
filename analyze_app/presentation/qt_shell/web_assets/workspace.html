@@ -28,6 +28,8 @@ button:disabled{opacity:.45;cursor:not-allowed}
 .pill.warn{border-color:#a67d47;background:#43321b;color:#f8d59d}
 .pill.bad{border-color:#9e4568;background:#472131;color:#ffd1e0}
 .empty{padding:12px;color:var(--muted)}
+.loader{display:inline-block;width:18px;height:18px;border:3px solid rgba(234,241,255,.22);border-top-color:var(--accent);border-radius:50%;animation:spin .8s linear infinite;vertical-align:middle;margin-right:8px}
+@keyframes spin{to{transform:rotate(360deg)}}
 .diff-wrap{overflow:auto;border:1px solid #20365c;border-radius:10px;background:#081222;flex:1;min-height:0}
 pre{margin:0;padding:12px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;line-height:1.35}
 .line{white-space:pre}
@@ -60,6 +62,7 @@ td{vertical-align:top;padding:0}
 <script>
 const data = __DATA_JSON__;
 const files = Array.isArray(data.files) ? data.files : [];
+const loading = Boolean(data.loading);
 let selected = data.selectedFile || (files[0] ? files[0].path : null);
 let mode = data.mode === 'unified' ? 'unified' : 'split';
 const diffText = data.diffText || '';
@@ -76,6 +79,10 @@ function send(action, extra=''){
 
 function renderFiles(){
   const root = document.getElementById('files');
+  if(loading){
+    root.innerHTML = '<div class="empty"><span class="loader"></span>Analysis is running...</div>';
+    return;
+  }
   if(!files.length){
     root.innerHTML = '<div class="empty">Рабочее дерево чистое.</div>';
     return;
@@ -146,6 +153,10 @@ function renderDiff(){
   const root = document.getElementById('diff');
   const hdr = document.getElementById('header');
   hdr.textContent = selected ? `Diff • ${selected}` : 'Diff';
+  if(loading){
+    root.innerHTML = '<div class="empty"><span class="loader"></span>Checks are still running.</div>';
+    return;
+  }
   if(!selected || !diffText){
     root.innerHTML = '<div class="empty">Выберите файл для просмотра diff.</div>';
     return;
@@ -163,8 +174,8 @@ function bindToolbar(){
   unifiedBtn.onclick = () => { mode = 'unified'; send('mode', 'value=unified'); };
   document.getElementById('stageBtn').onclick = () => send('stage');
   document.getElementById('openBtn').onclick = () => send('open');
-  document.getElementById('stageBtn').disabled = !selected;
-  document.getElementById('openBtn').disabled = !selected;
+  document.getElementById('stageBtn').disabled = loading || !selected;
+  document.getElementById('openBtn').disabled = loading || !selected;
 }
 
 renderFiles();

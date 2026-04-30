@@ -280,6 +280,23 @@
       line-height: 1.5;
     }
 
+    .loader {
+      display: inline-block;
+      width: 24px;
+      height: 24px;
+      border: 3px solid rgba(240, 246, 255, 0.22);
+      border-top-color: var(--file);
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+      margin-bottom: 8px;
+    }
+
+    @keyframes spin {
+      to {
+        transform: rotate(360deg);
+      }
+    }
+
     .kbd {
       font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
       font-size: 11px;
@@ -339,6 +356,7 @@
 
   <script>
     const payload = __DATA_JSON__ || { nodes: [], edges: [], mode: 'Structural view' };
+    const loading = Boolean(payload.loading);
 
     const MODE = {
       STRUCTURAL: 'structural',
@@ -713,7 +731,10 @@
     }
 
     function bootstrap() {
-      if (!state.nodes.length) {
+      if (loading) {
+        emptyEl.innerHTML = '<span class="loader"></span><br/>Building project map...';
+        emptyEl.style.display = 'block';
+      } else if (!state.nodes.length) {
         emptyEl.style.display = 'block';
       }
 

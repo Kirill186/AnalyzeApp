@@ -1,0 +1,2 @@
+[console_scripts]
+analyze-app = analyze_app.cli:main

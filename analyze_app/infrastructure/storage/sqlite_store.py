@@ -151,6 +151,18 @@ class SqliteStore:
             )
             return [(int(row[0]), str(row[1]), str(row[2]), str(row[3]), str(row[4])) for row in cursor.fetchall()]
 
+    def delete_repository(self, repo_id: int) -> None:
+        with self._connect() as conn:
+            for table in (
+                "commit_reports",
+                "working_tree_reports",
+                "project_maps",
+                "ai_authorship_cache",
+                "project_overviews",
+                "repositories",
+            ):
+                conn.execute(f"DELETE FROM {table} WHERE repo_id = ?", (repo_id,))
+
     def save_commit_report(self, repo_id: int, report: CommitReport) -> None:
         evidence_json = json.dumps([{"file": item.file, "reason": item.reason} for item in report.ai_summary.evidence])
         with self._connect() as conn:

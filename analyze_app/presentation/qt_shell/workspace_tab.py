@@ -50,6 +50,7 @@ class WorkspaceTab(QWidget):
         self._diff_by_file: dict[str, str] = {}
         self._selected_file: str | None = None
         self._mode = "split"
+        self._loading = False
 
         self.web = QWebEngineView()
         self.page = WorkspaceWebPage(self.web)
@@ -70,11 +71,26 @@ class WorkspaceTab(QWidget):
         diff_by_file: dict[str, str],
         selected_file: str | None = None,
     ) -> None:
+        self._loading = False
         self._files = files
         self._diff_by_file = diff_by_file
         known_paths = {str(item.get("path") or "") for item in files}
         target = selected_file or self._selected_file or (files[0]["path"] if files else None)
         self._selected_file = target if target in known_paths else (files[0]["path"] if files else None)
+        self._render()
+
+    def set_loading(self) -> None:
+        self._loading = True
+        self._files = []
+        self._diff_by_file = {}
+        self._selected_file = None
+        self._render()
+
+    def clear(self) -> None:
+        self._loading = False
+        self._files = []
+        self._diff_by_file = {}
+        self._selected_file = None
         self._render()
 
     def _on_file_selected(self, file_path: str) -> None:
@@ -95,6 +111,7 @@ class WorkspaceTab(QWidget):
             "selectedFile": self._selected_file,
             "mode": self._mode,
             "diffText": self._diff_by_file.get(self._selected_file or "", ""),
+            "loading": self._loading,
         }
         html = render_html_template(template_path, payload)
         self.web.setHtml(html, QUrl.fromLocalFile(str(template_path.parent)))

@@ -8,6 +8,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QListWidget,
     QListWidgetItem,
+    QMenu,
     QPushButton,
     QVBoxLayout,
     QWidget,
@@ -22,6 +23,7 @@ class RepoSidebar(QWidget):
     refresh_repo_clicked = Signal(int)
     favorite_toggled = Signal(int, bool)
     repo_selected = Signal(int)
+    repo_delete_requested = Signal(int)
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -41,6 +43,8 @@ class RepoSidebar(QWidget):
 
         self.repo_list = QListWidget()
         self.repo_list.itemClicked.connect(self._on_item_clicked)
+        self.repo_list.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.repo_list.customContextMenuRequested.connect(self._open_context_menu)
 
         root = QVBoxLayout(self)
         root.addLayout(controls)
@@ -73,3 +77,17 @@ class RepoSidebar(QWidget):
         if repo_id is None:
             return
         self.repo_selected.emit(int(repo_id))
+
+    def _open_context_menu(self, pos) -> None:
+        item = self.repo_list.itemAt(pos)
+        if item is None:
+            return
+        repo_id = item.data(Qt.UserRole)
+        if repo_id is None:
+            return
+
+        menu = QMenu(self)
+        delete_action = menu.addAction("Remove repository")
+        action = menu.exec(self.repo_list.mapToGlobal(pos))
+        if action == delete_action:
+            self.repo_delete_requested.emit(int(repo_id))

@@ -65,6 +65,18 @@ class UiStateStore:
     def set_favorites(self, favorites: set[int]) -> None:
         self.settings.setValue("repo_favorites", sorted(favorites))
 
+    def remove_repository(self, repo_id: int) -> None:
+        order = [item for item in self.repo_order() if item != repo_id]
+        self.set_repo_order(order)
+
+        groups = self.repo_groups()
+        groups.pop(repo_id, None)
+        self.settings.setValue("repo_groups", groups)
+
+        favorites = self.favorites()
+        favorites.discard(repo_id)
+        self.set_favorites(favorites)
+
     def quality_thresholds(self) -> dict[str, list[float]]:
         raw = self.settings.value("quality_thresholds", {})
         parsed: dict[str, list[float]] = {}
