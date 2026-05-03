@@ -3,14 +3,26 @@ from __future__ import annotations
 from pathlib import Path
 
 from PySide6.QtCore import QUrl, Signal
+from PySide6.QtWebEngineCore import QWebEnginePage
 from PySide6.QtWebEngineWidgets import QWebEngineView
 from PySide6.QtWidgets import QHBoxLayout, QPushButton, QVBoxLayout, QWidget
 
 from analyze_app.presentation.qt_shell.web_view_utils import markdown_to_html, render_html_template
 
 
+class OverviewWebPage(QWebEnginePage):
+    regenerate_requested = Signal()
+
+    def acceptNavigationRequest(self, url: QUrl, nav_type, is_main_frame: bool) -> bool:  # type: ignore[override]
+        if url.scheme() == "analyzeapp" and url.host().lower() == "regenerate-overview":
+            self.regenerate_requested.emit()
+            return False
+        return super().acceptNavigationRequest(url, nav_type, is_main_frame)
+
+
 class OverviewTab(QWidget):
     regenerate_requested = Signal()
+    refresh_requested = Signal()
 
     METRICS_ORDER: list[tuple[str, str]] = [
         ("lint", "Линт"),
@@ -27,14 +39,17 @@ class OverviewTab(QWidget):
         super().__init__(parent)
         self._state = self._empty_state()
 
-        self.regenerate_btn = QPushButton("Regenerate")
-        self.regenerate_btn.clicked.connect(self.regenerate_requested.emit)
+        self.refresh_btn = QPushButton("Refresh")
+        self.refresh_btn.clicked.connect(self.refresh_requested.emit)
 
         toolbar = QHBoxLayout()
         toolbar.addStretch()
-        toolbar.addWidget(self.regenerate_btn)
+        toolbar.addWidget(self.refresh_btn)
 
         self.web = QWebEngineView()
+        self.page = OverviewWebPage(self.web)
+        self.page.regenerate_requested.connect(self.regenerate_requested.emit)
+        self.web.setPage(self.page)
 
         root = QVBoxLayout(self)
         root.addLayout(toolbar)
@@ -62,7 +77,6 @@ class OverviewTab(QWidget):
         self._state["title"] = title
         self._state["filesCount"] = "..."
         self._state["loc"] = "..."
-        self._state["summaryHtml"] = "<p class='muted'>Анализ выполняется...</p>"
         self._state["readmeHtml"] = "<p class='muted'>Анализ выполняется...</p>"
         self._state["metrics"] = [
             {"label": label, "grade": "", "value": "Анализ выполняется", "threshold": "", "loading": True}
@@ -74,7 +88,13 @@ class OverviewTab(QWidget):
         self._state["summaryHtml"] = markdown_to_html(summary or "Описание пока отсутствует")
         self._render()
 
-    def update_project_info(self, title: str, files_count: int, loc: int, summary: str) -> None:
+    def update_project_stats(self, title: str, files_count: int | str, loc: int | str) -> None:
+        self._state["title"] = title
+        self._state["filesCount"] = files_count
+        self._state["loc"] = loc
+        self._render()
+
+    def update_project_info(self, title: str, files_count: int | str, loc: int | str, summary: str) -> None:
         self._state["title"] = title
         self._state["filesCount"] = files_count
         self._state["loc"] = loc

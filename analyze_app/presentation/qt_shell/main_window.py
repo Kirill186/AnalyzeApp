@@ -27,6 +27,7 @@ from analyze_app.application.use_cases.detect_ai_authorship import DetectAIAutho
 from analyze_app.application.use_cases.get_working_tree_report import WorkingTreeReportUseCase
 from analyze_app.application.use_cases.import_repository import ImportRepositoryUseCase
 from analyze_app.application.use_cases.list_commits import ListCommitsUseCase
+from analyze_app.domain.entities import Commit, GraphEdge, GraphNode, ProjectGraph
 from analyze_app.infrastructure.ai.ollama_backend import OllamaBackend
 from analyze_app.infrastructure.ai.project_overview_backend import ProjectOverviewBackend
 from analyze_app.infrastructure.ai.authorship import FeatureExtractor, ModelRuntime, ProbabilityCalibrator
@@ -80,6 +81,7 @@ class ImportRepositoryWorker(QObject):
 class RepositoryRefreshResult:
     repo_id: int
     repo_path: Path
+    data_refresh_message: str | None
     files_count: int
     loc: int
     summary: str
@@ -119,11 +121,9 @@ class RepositoryRefreshWorker(QObject):
 
     def _build_result(self) -> RepositoryRefreshResult:
         repo_path = Path(self.repo.working_path)
+        data_refresh_message = self.git_backend.refresh_remote_data(repo_path)
         tracked_files = self.git_backend.list_tracked_files(repo_path)
         loc = _count_python_loc(self.git_backend, repo_path, tracked_files)
-
-        cached_overview = self.store.load_project_overview(self.repo.repo_id)
-        summary = cached_overview[0] if cached_overview else "Описание пока не сгенерировано. Нажмите Regenerate."
 
         metrics = _calculate_quality_metrics(
             repo_id=self.repo.repo_id,
@@ -132,12 +132,13 @@ class RepositoryRefreshWorker(QObject):
             thresholds=self.thresholds,
             git_backend=self.git_backend,
             store=self.store,
+            use_cache=False,
         )
         commits = ListCommitsUseCase(self.git_backend).execute(repo_path, limit=50)
         project_map = BuildProjectMapUseCase(self.git_backend, AstMapBuilder(), self.store).execute(
             self.repo.repo_id,
             repo_path,
-            use_cache=True,
+            use_cache=False,
         )
 
         status_lines = self.git_backend.status_porcelain(repo_path)
@@ -150,7 +151,7 @@ class RepositoryRefreshWorker(QObject):
             self.store,
         )
         try:
-            report = use_case.execute(self.repo.repo_id, repo_path, use_cache=True)
+            report = use_case.execute(self.repo.repo_id, repo_path, use_cache=False)
         except Exception:  # noqa: BLE001
             report = None
 
@@ -173,9 +174,10 @@ class RepositoryRefreshWorker(QObject):
         return RepositoryRefreshResult(
             repo_id=self.repo.repo_id,
             repo_path=repo_path,
+            data_refresh_message=data_refresh_message,
             files_count=len(tracked_files),
             loc=loc,
-            summary=summary,
+            summary="",
             metrics=metrics,
             commits=commits,
             project_map=project_map,
@@ -205,7 +207,9 @@ class MainWindow(QMainWindow):
         self.import_worker: ImportRepositoryWorker | None = None
         self.refresh_thread: QThread | None = None
         self.refresh_worker: RepositoryRefreshWorker | None = None
-        self.pending_refresh_repo_id: int | None = None
+        self.active_refresh_repo_id: int | None = None
+        self.refresh_queue: list[int] = []
+        self.refresh_all_running = False
 
         splitter = QSplitter(Qt.Horizontal)
         splitter.addWidget(self.sidebar)
@@ -220,12 +224,12 @@ class MainWindow(QMainWindow):
 
     def _bind_actions(self, splitter: QSplitter) -> None:
         self.sidebar.add_clicked.connect(self._add_repository)
-        self.sidebar.refresh_all_clicked.connect(self._load_repositories)
+        self.sidebar.refresh_all_clicked.connect(self._refresh_all)
         self.sidebar.repo_selected.connect(self._on_repo_selected)
         self.sidebar.repo_delete_requested.connect(self._delete_repository)
 
         self.menu.add_repository.triggered.connect(self._add_repository)
-        self.menu.refresh_all.triggered.connect(self._load_repositories)
+        self.menu.refresh_all.triggered.connect(self._refresh_all)
         self.menu.refresh_current.triggered.connect(self._refresh_current)
         self.menu.rebuild_map.triggered.connect(self._refresh_current)
         self.menu.run_working_tree.triggered.connect(self._refresh_current)
@@ -240,6 +244,7 @@ class MainWindow(QMainWindow):
 
     def _bind_tab_actions(self) -> None:
         self.tabs.overview_tab.regenerate_requested.connect(self._regenerate_overview)
+        self.tabs.overview_tab.refresh_requested.connect(self._refresh_current)
 
     def _open_quality_settings(self) -> None:
         dialog = QualitySettingsDialog(self.state_store, self)
@@ -247,6 +252,9 @@ class MainWindow(QMainWindow):
             self._refresh_current()
 
     def _load_repositories(self) -> None:
+        self.sidebar.set_repositories(self._repository_items())
+
+    def _repository_items(self) -> list[RepoListItemVM]:
         items: list[RepoListItemVM] = []
         favorites = self.state_store.favorites()
         groups = self.state_store.repo_groups()
@@ -274,7 +282,7 @@ class MainWindow(QMainWindow):
         order = self.state_store.repo_order()
         ordering = {repo_id: idx for idx, repo_id in enumerate(order)}
         items.sort(key=lambda item: ordering.get(item.repo_id, 10_000 + item.repo_id))
-        self.sidebar.set_repositories(items)
+        return items
 
     def _add_repository(self) -> None:
         dialog = RepoAddDialog(self)
@@ -324,7 +332,28 @@ class MainWindow(QMainWindow):
         if not repos:
             return
         self.current_repo = repos[0]
-        self._refresh_current()
+        self._load_saved_repository_result()
+
+    def _load_saved_repository_result(self) -> None:
+        if not self.current_repo:
+            return
+
+        payload = self.store.load_repository_analysis_snapshot(self.current_repo.repo_id)
+        if payload:
+            result = _repository_result_from_snapshot(self.current_repo, payload, self.store)
+            self._apply_repository_result(result, update_summary=True)
+            self.status.showMessage(f"Loaded saved analysis: {self.current_repo.title}", 4_000)
+            return
+
+        cached_overview = self.store.load_project_overview(self.current_repo.repo_id)
+        summary = cached_overview[0] if cached_overview else "Описание пока не сгенерировано. Нажмите Regenerate."
+        self.tabs.overview_tab.update_project_info(self.current_repo.title, "-", "-", summary)
+        self.tabs.overview_tab.update_metrics({})
+        self.tabs.overview_tab.load_readme(Path(self.current_repo.working_path))
+        self.tabs.commits_tab.clear()
+        self.tabs.project_map_tab.clear()
+        self.tabs.workspace_tab.clear()
+        self.status.showMessage(f"No saved analysis yet: {self.current_repo.title}", 5_000)
 
     def _delete_repository(self, repo_id: int) -> None:
         repos = [repo for repo in self._current_repo_items() if repo.repo_id == repo_id]
@@ -354,32 +383,30 @@ class MainWindow(QMainWindow):
         self.tabs.workspace_tab.clear()
 
     def _current_repo_items(self) -> list[RepoListItemVM]:
-        items: list[RepoListItemVM] = []
-        favorites = self.state_store.favorites()
-        for repo_id, origin_url, working_path, default_branch, created_at in self.store.list_repositories():
-            source_type = "remote" if origin_url.startswith("http") or origin_url.endswith(".git") else "local"
-            items.append(
-                RepoListItemVM(
-                    repo_id=repo_id,
-                    title=Path(working_path).name or origin_url,
-                    source_type=source_type,
-                    group=source_type,
-                    is_favorite=repo_id in favorites,
-                    last_updated_at=datetime.fromisoformat(created_at) if created_at else None,
-                    default_branch=default_branch,
-                    health_grade=None,
-                    working_path=working_path,
-                    origin_url=origin_url,
-                )
-            )
-        return items
+        return self._repository_items()
 
     def _refresh_current(self) -> None:
         if not self.current_repo:
             self.status.showMessage("Select a repository in the left sidebar.", 4_000)
             return
-        self._show_repo_loading(self.current_repo)
-        self._start_repository_refresh(self.current_repo)
+        if self._start_repository_refresh(self.current_repo):
+            self._show_repo_loading(self.current_repo)
+
+    def _refresh_all(self) -> None:
+        repos = self._repository_items()
+        if not repos:
+            self.status.showMessage("No repositories to refresh.", 4_000)
+            return
+
+        active_id = self.active_refresh_repo_id
+        self.refresh_queue = [repo.repo_id for repo in repos if repo.repo_id != active_id]
+        self.refresh_all_running = True
+        if self.refresh_thread is not None and self.refresh_thread.isRunning():
+            self.status.showMessage(f"Refresh all queued: {len(self.refresh_queue)} repositories left.", 5_000)
+            return
+
+        self.status.showMessage(f"Refresh all started: {len(self.refresh_queue)} repositories.", 5_000)
+        self._start_next_queued_refresh()
 
     def _show_repo_loading(self, repo: RepoListItemVM) -> None:
         self.tabs.overview_tab.set_loading(repo.title)
@@ -388,12 +415,16 @@ class MainWindow(QMainWindow):
         self.tabs.workspace_tab.set_loading()
         self.status.showMessage(f"Analysis started: {repo.title}", 5_000)
 
-    def _start_repository_refresh(self, repo: RepoListItemVM) -> None:
+    def _start_repository_refresh(self, repo: RepoListItemVM) -> bool:
         if self.refresh_thread is not None and self.refresh_thread.isRunning():
-            self.pending_refresh_repo_id = repo.repo_id
+            if repo.repo_id == self.active_refresh_repo_id:
+                self.status.showMessage(f"Analysis already running: {repo.title}", 4_000)
+                return False
+            self._queue_repository_refresh(repo)
             self.status.showMessage(f"Analysis queued: {repo.title}", 4_000)
-            return
+            return False
 
+        self.active_refresh_repo_id = repo.repo_id
         self.refresh_thread = QThread(self)
         self.refresh_worker = RepositoryRefreshWorker(
             repo=repo,
@@ -410,32 +441,62 @@ class MainWindow(QMainWindow):
         self.refresh_worker.failed.connect(self.refresh_thread.quit)
         self.refresh_thread.finished.connect(self._cleanup_refresh_worker)
         self.refresh_thread.start()
+        return True
+
+    def _queue_repository_refresh(self, repo: RepoListItemVM) -> None:
+        if repo.repo_id == self.active_refresh_repo_id:
+            return
+        if repo.repo_id not in self.refresh_queue:
+            self.refresh_queue.append(repo.repo_id)
+
+    def _start_next_queued_refresh(self) -> None:
+        while self.refresh_queue:
+            repo_id = self.refresh_queue.pop(0)
+            repos = [repo for repo in self._repository_items() if repo.repo_id == repo_id]
+            if not repos:
+                continue
+            repo = repos[0]
+            if self._start_repository_refresh(repo):
+                if self.current_repo and self.current_repo.repo_id == repo.repo_id:
+                    self._show_repo_loading(repo)
+                else:
+                    self.status.showMessage(f"Analysis started: {repo.title}", 5_000)
+                return
+
+        if self.refresh_all_running:
+            self.refresh_all_running = False
+            self.status.showMessage("Refresh all finished.", 5_000)
 
     @Slot(object)
     def _on_refresh_finished(self, result: RepositoryRefreshResult) -> None:
+        self.store.save_repository_analysis_snapshot(result.repo_id, _snapshot_payload_from_result(result))
+
         if not self.current_repo or self.current_repo.repo_id != result.repo_id:
             return
 
-        self.tabs.overview_tab.update_project_info(
-            self.current_repo.title,
-            result.files_count,
-            result.loc,
-            result.summary,
-        )
+        self._apply_repository_result(result, update_summary=False)
+        messages = [message for message in (result.data_refresh_message, result.working_tree_message) if message]
+        if messages:
+            self.status.showMessage(" ".join(messages), 5_000)
+        else:
+            self.status.showMessage(f"Analysis finished: {self.current_repo.title}", 5_000)
+
+    def _apply_repository_result(self, result: RepositoryRefreshResult, *, update_summary: bool) -> None:
+        title = self.current_repo.title if self.current_repo and self.current_repo.repo_id == result.repo_id else result.repo_path.name
+        if update_summary:
+            self.tabs.overview_tab.update_project_info(title, result.files_count, result.loc, result.summary)
+        else:
+            self.tabs.overview_tab.update_project_stats(title, result.files_count, result.loc)
         self.tabs.overview_tab.update_metrics(result.metrics)
         self.tabs.overview_tab.load_readme(result.repo_path)
         self.tabs.commits_tab.set_commits(result.commits)
         self.tabs.project_map_tab.set_project_map(result.project_map)
         self.tabs.workspace_tab.set_workspace_data(result.workspace_files, result.workspace_diffs)
-        if result.working_tree_message:
-            self.status.showMessage(result.working_tree_message, 5_000)
-        else:
-            self.status.showMessage(f"Analysis finished: {self.current_repo.title}", 5_000)
 
     @Slot(int, str)
     def _on_refresh_failed(self, repo_id: int, error: str) -> None:
         if self.current_repo and self.current_repo.repo_id == repo_id:
-            self.tabs.overview_tab.update_project_info(self.current_repo.title, 0, 0, f"Analysis failed: {error}")
+            self.tabs.overview_tab.update_project_stats(self.current_repo.title, 0, 0)
             self.tabs.overview_tab.update_metrics({})
             self.tabs.commits_tab.clear()
             self.tabs.project_map_tab.clear()
@@ -444,6 +505,7 @@ class MainWindow(QMainWindow):
 
     @Slot()
     def _cleanup_refresh_worker(self) -> None:
+        self.active_refresh_repo_id = None
         if self.refresh_worker:
             self.refresh_worker.deleteLater()
             self.refresh_worker = None
@@ -451,10 +513,7 @@ class MainWindow(QMainWindow):
             self.refresh_thread.deleteLater()
             self.refresh_thread = None
 
-        pending_repo_id = self.pending_refresh_repo_id
-        self.pending_refresh_repo_id = None
-        if pending_repo_id and self.current_repo and self.current_repo.repo_id == pending_repo_id:
-            self._start_repository_refresh(self.current_repo)
+        self._start_next_queued_refresh()
 
     def _refresh_overview(self) -> None:
         if not self.current_repo:
@@ -752,6 +811,171 @@ class MainWindow(QMainWindow):
         self.status.showMessage(f"Selected commit: {commit_hash}", 4_000)
 
 
+def _snapshot_payload_from_result(result: RepositoryRefreshResult) -> dict:
+    return {
+        "files_count": result.files_count,
+        "loc": result.loc,
+        "metrics": {name: list(values) for name, values in result.metrics.items()},
+        "commits": [_commit_to_payload(commit) for commit in result.commits],
+        "project_map": _project_map_to_payload(result.project_map),
+        "workspace_files": result.workspace_files,
+        "workspace_diffs": result.workspace_diffs,
+        "working_tree_message": result.working_tree_message,
+    }
+
+
+def _repository_result_from_snapshot(
+    repo: RepoListItemVM,
+    payload: dict,
+    store: SqliteStore,
+) -> RepositoryRefreshResult:
+    cached_overview = store.load_project_overview(repo.repo_id)
+    summary = cached_overview[0] if cached_overview else str(payload.get("summary") or "")
+    raw_metrics = payload.get("metrics") or {}
+    if not isinstance(raw_metrics, dict):
+        raw_metrics = {}
+    raw_workspace_diffs = payload.get("workspace_diffs") or {}
+    if not isinstance(raw_workspace_diffs, dict):
+        raw_workspace_diffs = {}
+    raw_project_map = payload.get("project_map") or {}
+    if not isinstance(raw_project_map, dict):
+        raw_project_map = {}
+    metrics = {
+        str(name): _metric_tuple(values)
+        for name, values in raw_metrics.items()
+    }
+    commits = [
+        _commit_from_payload(item)
+        for item in (payload.get("commits") or [])
+        if isinstance(item, dict)
+    ]
+    workspace_files = [
+        dict(item)
+        for item in (payload.get("workspace_files") or [])
+        if isinstance(item, dict)
+    ]
+    workspace_diffs = {
+        str(path): str(diff)
+        for path, diff in raw_workspace_diffs.items()
+    }
+    return RepositoryRefreshResult(
+        repo_id=repo.repo_id,
+        repo_path=Path(repo.working_path),
+        data_refresh_message=None,
+        files_count=_coerce_int(payload.get("files_count")),
+        loc=_coerce_int(payload.get("loc")),
+        summary=summary,
+        metrics=metrics,
+        commits=commits,
+        project_map=_project_map_from_payload(raw_project_map),
+        workspace_files=workspace_files,
+        workspace_diffs=workspace_diffs,
+        working_tree_message=None,
+    )
+
+
+def _commit_to_payload(commit: Commit) -> dict[str, object]:
+    return {
+        "hash": commit.hash,
+        "author": commit.author,
+        "authored_at": commit.authored_at.isoformat(),
+        "message": commit.message,
+        "parents": list(commit.parents),
+    }
+
+
+def _commit_from_payload(payload: dict) -> Commit:
+    authored_at_raw = str(payload.get("authored_at") or "")
+    try:
+        authored_at = datetime.fromisoformat(authored_at_raw)
+    except ValueError:
+        authored_at = datetime.now().astimezone()
+    parents_raw = payload.get("parents") or []
+    if isinstance(parents_raw, str):
+        parents_raw = parents_raw.split()
+    elif not isinstance(parents_raw, (list, tuple, set)):
+        parents_raw = []
+    return Commit(
+        hash=str(payload.get("hash") or ""),
+        author=str(payload.get("author") or ""),
+        authored_at=authored_at,
+        message=str(payload.get("message") or ""),
+        parents=tuple(str(parent) for parent in parents_raw),
+    )
+
+
+def _project_map_to_payload(project_map: object) -> dict[str, list[dict[str, object]]]:
+    nodes = getattr(project_map, "nodes", []) or []
+    edges = getattr(project_map, "edges", []) or []
+    return {
+        "nodes": [
+            {
+                "node_id": node.node_id,
+                "kind": node.kind,
+                "label": node.label,
+                "path": node.path,
+                "hotspot_score": node.hotspot_score,
+            }
+            for node in nodes
+        ],
+        "edges": [
+            {
+                "source": edge.source,
+                "target": edge.target,
+                "relation": edge.relation,
+            }
+            for edge in edges
+        ],
+    }
+
+
+def _project_map_from_payload(payload: dict) -> ProjectGraph:
+    nodes: list[GraphNode] = []
+    for item in payload.get("nodes") or []:
+        if not isinstance(item, dict):
+            continue
+        nodes.append(
+            GraphNode(
+                node_id=str(item.get("node_id") or item.get("id") or ""),
+                kind=str(item.get("kind") or ""),
+                label=str(item.get("label") or ""),
+                path=str(item.get("path") or ""),
+                hotspot_score=_coerce_int(item.get("hotspot_score", item.get("hotspot"))),
+            )
+        )
+
+    edges: list[GraphEdge] = []
+    for item in payload.get("edges") or []:
+        if not isinstance(item, dict):
+            continue
+        edges.append(
+            GraphEdge(
+                source=str(item.get("source") or ""),
+                target=str(item.get("target") or ""),
+                relation=str(item.get("relation") or ""),
+            )
+        )
+    return ProjectGraph(nodes=nodes, edges=edges)
+
+
+def _metric_tuple(values: object) -> tuple[str, str, str]:
+    if isinstance(values, (list, tuple)):
+        items = list(values)
+    else:
+        items = []
+    grade = str(items[0]) if len(items) > 0 else "-"
+    value = str(items[1]) if len(items) > 1 else "-"
+    threshold = str(items[2]) if len(items) > 2 else ""
+    return grade, value, threshold
+
+
+def _coerce_int(value: object, default: int = 0) -> int:
+    try:
+        return int(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return default
+
+
 def run_desktop_app() -> None:
     app = QApplication(sys.argv)
     apply_theme(app)
@@ -834,6 +1058,7 @@ def _calculate_quality_metrics(
     thresholds: dict[str, list[float]],
     git_backend: GitBackend,
     store: SqliteStore,
+    use_cache: bool = True,
 ) -> dict[str, tuple[str, str, str]]:
     kloc = max(loc / 1000.0, 0.001)
     metrics: dict[str, tuple[str, str, str]] = {}
@@ -914,7 +1139,7 @@ def _calculate_quality_metrics(
         f"{duplication.duplication_pct:.1f}% ({duplication.duplicate_groups} групп)",
         _fmt_thresholds("<=", dup_thr),
     )
-    metrics["ai_signal"] = _calculate_ai_signal_metric(repo_id, repo_path, git_backend, store)
+    metrics["ai_signal"] = _calculate_ai_signal_metric(repo_id, repo_path, git_backend, store, use_cache=use_cache)
 
     return metrics
 
@@ -924,13 +1149,14 @@ def _calculate_ai_signal_metric(
     repo_path: Path,
     git_backend: GitBackend,
     store: SqliteStore,
+    use_cache: bool = True,
 ) -> tuple[str, str, str]:
     try:
         result = _build_ai_authorship_use_case(git_backend, store).execute(
             repo_id=repo_id,
             repo_path=repo_path,
             scope="working_tree",
-            use_cache=True,
+            use_cache=use_cache,
         )
     except Exception:
         return "—", "n/a", "нет данных AIAuthorship"

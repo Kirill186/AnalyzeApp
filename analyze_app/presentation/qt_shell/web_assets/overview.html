@@ -44,6 +44,15 @@ body{
 @keyframes spin{to{transform:rotate(360deg)}}
 .panel{background:var(--glass);border:1px solid var(--stroke);border-radius:16px;padding:16px;margin-top:16px}
 .panel h3{margin:0 0 10px 0;font-size:16px}
+.panel-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:0 0 10px 0}
+.panel-head h3{margin:0}
+.panel-action{
+  display:inline-flex;align-items:center;justify-content:center;
+  min-height:32px;padding:0 12px;border-radius:8px;
+  border:1px solid rgba(116,168,255,.5);background:rgba(116,168,255,.14);
+  color:#dbe8ff;text-decoration:none;font-size:13px;font-weight:650;
+}
+.panel-action:hover{background:rgba(116,168,255,.24)}
 .content{line-height:1.5}
 pre,code{background:#0b1428;border-radius:8px}
 pre{padding:10px;overflow:auto}
@@ -88,7 +97,13 @@ document.getElementById('app').innerHTML = `
     <div class="muted">AnalyzeApp • Обзор</div>
   </section>
   <section class="metrics">${metrics}</section>
-  <section class="panel"><h3>Project overview</h3><div class="content">${data.summaryHtml}</div></section>
+  <section class="panel">
+    <div class="panel-head">
+      <h3>Project overview</h3>
+      <a class="panel-action" href="analyzeapp://regenerate-overview">Regenerate</a>
+    </div>
+    <div class="content">${data.summaryHtml}</div>
+  </section>
   <section class="panel"><h3>README</h3><div class="content">${data.readmeHtml}</div></section>
 `;
 

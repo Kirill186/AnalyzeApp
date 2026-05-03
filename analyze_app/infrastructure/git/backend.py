@@ -81,6 +81,32 @@ class GitBackend:
     def push_current_branch(self, repo_path: Path) -> None:
         self._git(["push"], repo_path)
 
+    def refresh_remote_data(self, repo_path: Path) -> str | None:
+        try:
+            remotes = [line for line in self._git(["remote"], repo_path).splitlines() if line.strip()]
+        except subprocess.CalledProcessError:
+            return None
+        if not remotes:
+            return None
+
+        try:
+            self._git(["fetch", "--all", "--prune"], repo_path)
+        except subprocess.CalledProcessError as error:
+            return f"Fetch failed: {_format_git_error(error)}"
+
+        if self.status_porcelain(repo_path):
+            return "Fetched latest remote data; local changes left untouched."
+
+        branch = self._git(["branch", "--show-current"], repo_path)
+        if not branch:
+            return "Fetched latest remote data."
+
+        try:
+            self._git(["pull", "--ff-only"], repo_path)
+        except subprocess.CalledProcessError as error:
+            return f"Fetched latest remote data; fast-forward skipped: {_format_git_error(error)}"
+        return "Fetched latest remote data and fast-forwarded current branch."
+
 
 
     def read_file_at_commit(self, repo_path: Path, commit_hash: str, file_path: str) -> str:
@@ -125,3 +151,10 @@ class GitBackend:
         if completed.returncode != 0:
             raise subprocess.CalledProcessError(completed.returncode, command, output=stdout, stderr=stderr)
         return stdout.strip()
+
+
+def _format_git_error(error: subprocess.CalledProcessError) -> str:
+    message = (error.stderr or error.output or "").strip()
+    if not message:
+        return f"git exited with code {error.returncode}"
+    return message.splitlines()[-1]

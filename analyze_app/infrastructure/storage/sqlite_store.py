@@ -128,6 +128,15 @@ class SqliteStore:
                 )
                 """
             )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS repository_analysis_snapshots (
+                    repo_id INTEGER PRIMARY KEY,
+                    payload_json TEXT NOT NULL,
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+                )
+                """
+            )
 
     def add_repository(self, origin_url: str, working_path: str, default_branch: str = "main") -> int:
         with self._connect() as conn:
@@ -159,6 +168,7 @@ class SqliteStore:
                 "project_maps",
                 "ai_authorship_cache",
                 "project_overviews",
+                "repository_analysis_snapshots",
                 "repositories",
             ):
                 conn.execute(f"DELETE FROM {table} WHERE repo_id = ?", (repo_id,))
@@ -300,6 +310,31 @@ class SqliteStore:
             if not row:
                 return None
         return str(row[0]), str(row[1])
+
+    def save_repository_analysis_snapshot(self, repo_id: int, payload: dict) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO repository_analysis_snapshots (repo_id, payload_json, created_at)
+                VALUES (?, ?, CURRENT_TIMESTAMP)
+                """,
+                (repo_id, json.dumps(payload, ensure_ascii=False)),
+            )
+
+    def load_repository_analysis_snapshot(self, repo_id: int) -> dict | None:
+        with self._connect() as conn:
+            cursor = conn.execute(
+                """
+                SELECT payload_json
+                FROM repository_analysis_snapshots
+                WHERE repo_id = ?
+                """,
+                (repo_id,),
+            )
+            row = cursor.fetchone()
+            if not row:
+                return None
+        return json.loads(row[0])
 
 
     def save_ai_authorship(self, repo_id: int, scope_key: str, result: AIAuthorshipResult) -> None:

@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from PySide6.QtWidgets import (
+    QComboBox,
     QDialog,
     QDialogButtonBox,
     QFileDialog,
@@ -11,7 +12,9 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QMessageBox,
     QPushButton,
+    QStackedWidget,
     QVBoxLayout,
+    QWidget,
 )
 
 
@@ -21,20 +24,41 @@ class RepoAddDialog(QDialog):
         self.setWindowTitle("Add Repository")
         self.setMinimumWidth(500)
 
+        self.source_type_combo = QComboBox()
+        self.source_type_combo.addItem("Remote URL", "remote")
+        self.source_type_combo.addItem("Local folder", "local")
+
         self.url_edit = QLineEdit()
+        self.url_edit.setPlaceholderText("https://github.com/org/repo.git")
         self.path_edit = QLineEdit()
         self.display_name_edit = QLineEdit()
 
-        browse_btn = QPushButton("Browse…")
+        browse_btn = QPushButton("Browse...")
         browse_btn.clicked.connect(self._browse_path)
 
         path_layout = QHBoxLayout()
+        path_layout.setContentsMargins(0, 0, 0, 0)
         path_layout.addWidget(self.path_edit)
         path_layout.addWidget(browse_btn)
 
+        remote_page = QWidget()
+        remote_layout = QFormLayout(remote_page)
+        remote_layout.setContentsMargins(0, 0, 0, 0)
+        remote_layout.addRow("Repository URL", self.url_edit)
+
+        local_page = QWidget()
+        local_layout = QFormLayout(local_page)
+        local_layout.setContentsMargins(0, 0, 0, 0)
+        local_layout.addRow("Local Path", path_layout)
+
+        self.source_stack = QStackedWidget()
+        self.source_stack.addWidget(remote_page)
+        self.source_stack.addWidget(local_page)
+        self.source_type_combo.currentIndexChanged.connect(self.source_stack.setCurrentIndex)
+
         form = QFormLayout()
-        form.addRow("Repository URL", self.url_edit)
-        form.addRow("Local Path", path_layout)
+        form.addRow("Add as", self.source_type_combo)
+        form.addRow(self.source_stack)
         form.addRow("Display Name", self.display_name_edit)
 
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
@@ -51,31 +75,43 @@ class RepoAddDialog(QDialog):
             self.path_edit.setText(folder)
 
     def _validate_accept(self) -> None:
-        url = self.url_edit.text().strip()
+        if self.source_type == "remote":
+            url = self.url_edit.text().strip()
+            if not url:
+                QMessageBox.warning(self, "Validation", "Enter a Repository URL.")
+                return
+            if not (url.startswith("http://") or url.startswith("https://") or url.endswith(".git")):
+                QMessageBox.warning(self, "Validation", "URL must be git-compatible.")
+                return
+            self.accept()
+            return
+
         path = self.path_edit.text().strip()
-        if not url and not path:
-            QMessageBox.warning(self, "Validation", "Укажите Repository URL или Local Path.")
+        if not path:
+            QMessageBox.warning(self, "Validation", "Choose a Local Path.")
             return
-        if url and not (url.startswith("http://") or url.startswith("https://") or url.endswith(".git")):
-            QMessageBox.warning(self, "Validation", "URL должен быть git-совместимым.")
+        local_path = Path(path).expanduser().resolve()
+        if not local_path.exists() or not local_path.is_dir():
+            QMessageBox.warning(self, "Validation", "Local Path must exist and be a folder.")
             return
-        if path:
-            local_path = Path(path).expanduser().resolve()
-            if not local_path.exists() or not local_path.is_dir():
-                QMessageBox.warning(self, "Validation", "Local Path должен существовать и быть папкой.")
-                return
-            if not (local_path / ".git").exists():
-                QMessageBox.warning(
-                    self,
-                    "Validation",
-                    "Указанная папка не выглядит как git-репозиторий (.git не найден).",
-                )
-                return
+        if not (local_path / ".git").exists():
+            QMessageBox.warning(
+                self,
+                "Validation",
+                "Selected folder does not look like a git repository (.git was not found).",
+            )
+            return
         self.accept()
 
     @property
+    def source_type(self) -> str:
+        return str(self.source_type_combo.currentData())
+
+    @property
     def source(self) -> str:
-        return self.path_edit.text().strip() or self.url_edit.text().strip()
+        if self.source_type == "local":
+            return self.path_edit.text().strip()
+        return self.url_edit.text().strip()
 
     @property
     def display_name(self) -> str:
