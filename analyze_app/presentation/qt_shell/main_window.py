@@ -42,7 +42,7 @@ from analyze_app.infrastructure.git.backend import GitBackend
 from analyze_app.infrastructure.storage.sqlite_store import SqliteStore
 from analyze_app.presentation.qt_shell.app_menu import build_menu
 from analyze_app.presentation.qt_shell.repo_add_dialog import RepoAddDialog
-from analyze_app.presentation.qt_shell.repo_sidebar import RepoSidebar
+from analyze_app.presentation.qt_shell.repo_sidebar import RepoSidebar, STANDARD_GROUPS
 from analyze_app.presentation.qt_shell.report_tabs import ReportTabs
 from analyze_app.presentation.qt_shell.settings_dialog import QualitySettingsDialog
 from analyze_app.presentation.qt_shell.state_store import RepoListItemVM, UiStateStore
@@ -225,6 +225,13 @@ class MainWindow(QMainWindow):
     def _bind_actions(self, splitter: QSplitter) -> None:
         self.sidebar.add_clicked.connect(self._add_repository)
         self.sidebar.refresh_all_clicked.connect(self._refresh_all)
+        self.sidebar.refresh_repo_clicked.connect(self._refresh_repository)
+        self.sidebar.favorite_toggled.connect(self._set_repository_favorite)
+        self.sidebar.repo_group_changed.connect(self._set_repository_group)
+        self.sidebar.repo_order_changed.connect(self._set_repository_order)
+        self.sidebar.group_order_changed.connect(self._set_repository_group_order)
+        self.sidebar.group_renamed.connect(self._rename_repository_group)
+        self.sidebar.group_delete_requested.connect(self._delete_repository_group)
         self.sidebar.repo_selected.connect(self._on_repo_selected)
         self.sidebar.repo_delete_requested.connect(self._delete_repository)
 
@@ -252,24 +259,25 @@ class MainWindow(QMainWindow):
             self._refresh_current()
 
     def _load_repositories(self) -> None:
-        self.sidebar.set_repositories(self._repository_items())
+        items = self._repository_items()
+        self.sidebar.set_repositories(items, self._repository_groups(items))
 
     def _repository_items(self) -> list[RepoListItemVM]:
         items: list[RepoListItemVM] = []
         favorites = self.state_store.favorites()
         groups = self.state_store.repo_groups()
-        for repo_id, origin_url, working_path, default_branch, created_at in self.store.list_repositories():
+        for repo_id, origin_url, working_path, default_branch, _created_at in self.store.list_repositories():
             source_type = "remote" if origin_url.startswith("http") or origin_url.endswith(".git") else "local"
-            group = groups.get(repo_id, source_type)
+            group = _normalize_repo_group(groups.get(repo_id, source_type), source_type)
             is_favorite = repo_id in favorites
             title = Path(working_path).name or origin_url
-            last_updated = datetime.fromisoformat(created_at) if created_at else None
+            last_updated = self.git_backend.last_commit_at(Path(working_path))
             items.append(
                 RepoListItemVM(
                     repo_id=repo_id,
                     title=title,
                     source_type=source_type,
-                    group=group if group in {"favorites", "local", "remote", "archived"} else source_type,
+                    group=group,
                     is_favorite=is_favorite,
                     last_updated_at=last_updated,
                     default_branch=default_branch,
@@ -283,6 +291,23 @@ class MainWindow(QMainWindow):
         ordering = {repo_id: idx for idx, repo_id in enumerate(order)}
         items.sort(key=lambda item: ordering.get(item.repo_id, 10_000 + item.repo_id))
         return items
+
+    def _repository_groups(self, items: list[RepoListItemVM] | None = None) -> list[str]:
+        items = items if items is not None else self._repository_items()
+        ordered: list[str] = []
+
+        stored_order = self.state_store.repo_group_order()
+        if not stored_order:
+            stored_order = list(STANDARD_GROUPS)
+
+        for group in stored_order:
+            normalized = _normalize_repo_group(group, "")
+            if normalized and normalized not in ordered:
+                ordered.append(normalized)
+        for repo in items:
+            if repo.group not in ordered:
+                ordered.append(repo.group)
+        return ordered
 
     def _add_repository(self) -> None:
         dialog = RepoAddDialog(self)
@@ -354,6 +379,127 @@ class MainWindow(QMainWindow):
         self.tabs.project_map_tab.clear()
         self.tabs.workspace_tab.clear()
         self.status.showMessage(f"No saved analysis yet: {self.current_repo.title}", 5_000)
+
+    def _refresh_repository(self, repo_id: int) -> None:
+        repos = [repo for repo in self._current_repo_items() if repo.repo_id == repo_id]
+        if not repos:
+            return
+        repo = repos[0]
+        if self._start_repository_refresh(repo):
+            if self.current_repo and self.current_repo.repo_id == repo.repo_id:
+                self._show_repo_loading(repo)
+            else:
+                self.status.showMessage(f"Analysis started: {repo.title}", 5_000)
+
+    def _set_repository_favorite(self, repo_id: int, is_favorite: bool) -> None:
+        favorites = self.state_store.favorites()
+        if is_favorite:
+            favorites.add(repo_id)
+        else:
+            favorites.discard(repo_id)
+        self.state_store.set_favorites(favorites)
+        self._load_repositories()
+        self._sync_current_repo()
+
+        repos = [repo for repo in self._current_repo_items() if repo.repo_id == repo_id]
+        title = repos[0].title if repos else f"#{repo_id}"
+        message = "добавлен в избранное" if is_favorite else "убран из избранного"
+        self.status.showMessage(f"{title}: {message}", 4_000)
+
+    def _set_repository_group(self, repo_id: int, group: str) -> None:
+        repos = [repo for repo in self._current_repo_items() if repo.repo_id == repo_id]
+        if not repos:
+            return
+        repo = repos[0]
+        target_group = _normalize_repo_group(group, repo.source_type)
+        if target_group == repo.group:
+            return
+
+        self.state_store.set_repo_group(repo_id, target_group)
+        self._load_repositories()
+        self._sync_current_repo()
+        self.status.showMessage(f"{repo.title}: группа '{target_group}'", 4_000)
+
+    def _set_repository_order(self, repo_ids: list[int]) -> None:
+        known_ids = [repo.repo_id for repo in self._current_repo_items()]
+        known = set(known_ids)
+        ordered: list[int] = []
+        for repo_id in repo_ids:
+            if repo_id in known and repo_id not in ordered:
+                ordered.append(repo_id)
+        for repo_id in known_ids:
+            if repo_id not in ordered:
+                ordered.append(repo_id)
+
+        self.state_store.set_repo_order(ordered)
+        self._load_repositories()
+        self._sync_current_repo()
+        self.status.showMessage("Порядок репозиториев обновлен.", 3_000)
+
+    def _set_repository_group_order(self, groups: list[str]) -> None:
+        known_groups = self._repository_groups()
+        ordered: list[str] = []
+        for group in groups:
+            normalized = _normalize_repo_group(group, "")
+            if normalized in known_groups and normalized not in ordered:
+                ordered.append(normalized)
+        for group in known_groups:
+            if group not in ordered:
+                ordered.append(group)
+
+        self.state_store.set_repo_group_order(ordered)
+        self._load_repositories()
+        self._sync_current_repo()
+
+    def _rename_repository_group(self, old_group: str, new_group: str) -> None:
+        old_group = _normalize_repo_group(old_group, "")
+        new_group = _normalize_repo_group(new_group, "")
+        if not old_group or not new_group or old_group == new_group:
+            return
+
+        affected_repo_ids = [repo.repo_id for repo in self._current_repo_items() if repo.group == old_group]
+        self.state_store.rename_repo_group(old_group, new_group, affected_repo_ids)
+        self._load_repositories()
+        self._sync_current_repo()
+        self.status.showMessage(f"Группа переименована: {old_group} → {new_group}", 4_000)
+
+    def _delete_repository_group(self, group: str) -> None:
+        group = _normalize_repo_group(group, "")
+        if not group:
+            return
+
+        repos = [repo for repo in self._current_repo_items() if repo.group == group]
+        if any(repo.source_type == group for repo in repos):
+            QMessageBox.information(
+                self,
+                "Удаление группы",
+                "Системную группу с репозиториями нельзя удалить. Сначала перенесите репозитории или переименуйте группу.",
+            )
+            return
+
+        if repos:
+            reply = QMessageBox.question(
+                self,
+                "Удаление группы",
+                f"Удалить группу '{group}' и вернуть ее репозитории в исходные группы?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if reply != QMessageBox.StandardButton.Yes:
+                return
+
+        fallback_groups = {repo.repo_id: repo.source_type for repo in repos}
+        self.state_store.delete_repo_group(group, fallback_groups)
+        self._load_repositories()
+        self._sync_current_repo()
+        self.status.showMessage(f"Группа удалена: {group}", 4_000)
+
+    def _sync_current_repo(self) -> None:
+        if not self.current_repo:
+            return
+        repos = [repo for repo in self._repository_items() if repo.repo_id == self.current_repo.repo_id]
+        if repos:
+            self.current_repo = repos[0]
 
     def _delete_repository(self, repo_id: int) -> None:
         repos = [repo for repo in self._current_repo_items() if repo.repo_id == repo_id]
@@ -470,6 +616,8 @@ class MainWindow(QMainWindow):
     @Slot(object)
     def _on_refresh_finished(self, result: RepositoryRefreshResult) -> None:
         self.store.save_repository_analysis_snapshot(result.repo_id, _snapshot_payload_from_result(result))
+        self._load_repositories()
+        self._sync_current_repo()
 
         if not self.current_repo or self.current_repo.repo_id != result.repo_id:
             return
@@ -974,6 +1122,13 @@ def _coerce_int(value: object, default: int = 0) -> int:
         return int(value)  # type: ignore[arg-type]
     except (TypeError, ValueError):
         return default
+
+
+def _normalize_repo_group(group: object, fallback: str) -> str:
+    value = str(group or "").strip()
+    if not value or value == "favorites":
+        return fallback
+    return value
 
 
 def run_desktop_app() -> None:

@@ -39,6 +39,17 @@ class GitBackend:
             )
         return commits
 
+    def last_commit_at(self, repo_path: Path) -> datetime | None:
+        try:
+            output = self._git(["log", "-1", "--format=%cI"], repo_path)
+        except subprocess.CalledProcessError:
+            return None
+        if not output:
+            return None
+        try:
+            return datetime.fromisoformat(output.replace("Z", "+00:00"))
+        except ValueError:
+            return None
 
     def checkout(self, repo_path: Path, ref: str) -> None:
         self._git(["checkout", ref], repo_path)
