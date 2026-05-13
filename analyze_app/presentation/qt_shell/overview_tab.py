@@ -88,6 +88,12 @@ class OverviewTab(QWidget):
         self._state["summaryHtml"] = markdown_to_html(summary or "Описание пока отсутствует")
         self._render()
 
+    def set_summary_loading(self) -> None:
+        self._state["summaryHtml"] = (
+            "<p class='muted'><span class='loader'></span> Генерация описания проекта...</p>"
+        )
+        self._render()
+
     def update_project_stats(self, title: str, files_count: int | str, loc: int | str) -> None:
         self._state["title"] = title
         self._state["filesCount"] = files_count

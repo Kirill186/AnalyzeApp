@@ -127,6 +127,8 @@ analyze_app/
         hotspot_service.py
     ai/
       llm/
+        llama_cpp_backend.py
+        ollama_cache.py
         ollama_backend.py
         api_backend.py
         prompt_builder.py
@@ -320,7 +322,7 @@ Pipeline:
 - Импорт репозитория, граф коммитов, diff;
 - Ruff + pytest;
 - отчёт по коммиту;
-- базовый AI-summary через Ollama;
+- базовый AI-summary через локальный GGUF backend;
 - SQLite-кэш.
 
 ### Этап 2

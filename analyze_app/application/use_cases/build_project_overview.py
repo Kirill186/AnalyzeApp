@@ -3,12 +3,12 @@ from __future__ import annotations
 from pathlib import Path
 
 from analyze_app.domain.entities import ProjectOverviewResult
-from analyze_app.infrastructure.ai.project_overview_backend import ProjectOverviewBackend
+from analyze_app.infrastructure.ai.base import ProjectOverviewAIBackend
 from analyze_app.infrastructure.git.backend import GitBackend
 
 
 class BuildProjectOverviewUseCase:
-    def __init__(self, git_backend: GitBackend, ai_backend: ProjectOverviewBackend) -> None:
+    def __init__(self, git_backend: GitBackend, ai_backend: ProjectOverviewAIBackend) -> None:
         self.git_backend = git_backend
         self.ai_backend = ai_backend
 

@@ -24,6 +24,10 @@ analyze_app/domain/__init__.py
 analyze_app/domain/entities.py
 analyze_app/infrastructure/__init__.py
 analyze_app/infrastructure/ai/__init__.py
+analyze_app/infrastructure/ai/base.py
+analyze_app/infrastructure/ai/factory.py
+analyze_app/infrastructure/ai/llama_cpp_backend.py
+analyze_app/infrastructure/ai/ollama_cache.py
 analyze_app/infrastructure/ai/ollama_backend.py
 analyze_app/infrastructure/ai/project_overview_backend.py
 analyze_app/infrastructure/ai/authorship/__init__.py

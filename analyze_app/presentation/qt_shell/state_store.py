@@ -6,6 +6,8 @@ from typing import Literal
 
 from PySide6.QtCore import QSettings
 
+from analyze_app.shared.config import DEFAULT_CONFIG
+
 
 DEFAULT_QUALITY_THRESHOLDS: dict[str, list[float]] = {
     "lint_issues_per_kloc": [2.0, 6.0, 12.0, 20.0],
@@ -30,6 +32,17 @@ class RepoListItemVM:
     health_grade: str | None
     working_path: str
     origin_url: str
+
+
+@dataclass(slots=True)
+class AISettings:
+    backend: Literal["llama_cpp", "ollama"]
+    model_path: str
+    context_size: int
+    threads: int
+    gpu_layers: int
+    ollama_url: str
+    ollama_model: str
 
 
 class UiStateStore:
@@ -182,6 +195,32 @@ class UiStateStore:
     def reset_quality_thresholds(self) -> None:
         self.set_quality_thresholds({key: value.copy() for key, value in DEFAULT_QUALITY_THRESHOLDS.items()})
 
+    def ai_settings(self) -> AISettings:
+        backend = str(self.settings.value("ai/backend", DEFAULT_CONFIG.llm_backend) or DEFAULT_CONFIG.llm_backend)
+        backend = backend if backend in {"llama_cpp", "ollama"} else "llama_cpp"
+        return AISettings(
+            backend=backend,  # type: ignore[arg-type]
+            model_path=str(
+                self.settings.value("ai/model_path", DEFAULT_CONFIG.llm_model_path) or DEFAULT_CONFIG.llm_model_path
+            ),
+            context_size=_coerce_int(self.settings.value("ai/context_size", DEFAULT_CONFIG.llm_context_size), 4096),
+            threads=_coerce_int(self.settings.value("ai/threads", DEFAULT_CONFIG.llm_threads), 0),
+            gpu_layers=_coerce_int(self.settings.value("ai/gpu_layers", DEFAULT_CONFIG.llm_gpu_layers), 0),
+            ollama_url=str(self.settings.value("ai/ollama_url", DEFAULT_CONFIG.ollama_url) or DEFAULT_CONFIG.ollama_url),
+            ollama_model=str(
+                self.settings.value("ai/ollama_model", DEFAULT_CONFIG.ollama_model) or DEFAULT_CONFIG.ollama_model
+            ),
+        )
+
+    def set_ai_settings(self, settings: AISettings) -> None:
+        self.settings.setValue("ai/backend", settings.backend)
+        self.settings.setValue("ai/model_path", settings.model_path)
+        self.settings.setValue("ai/context_size", int(settings.context_size))
+        self.settings.setValue("ai/threads", int(settings.threads))
+        self.settings.setValue("ai/gpu_layers", int(settings.gpu_layers))
+        self.settings.setValue("ai/ollama_url", settings.ollama_url)
+        self.settings.setValue("ai/ollama_model", settings.ollama_model)
+
 
 def _coerce_int_list(values: list[object]) -> list[int]:
     parsed: list[int] = []
@@ -200,3 +239,10 @@ def _coerce_str_list(values: list[object]) -> list[str]:
         if item and item != "favorites" and item not in parsed:
             parsed.append(item)
     return parsed
+
+
+def _coerce_int(value: object, default: int) -> int:
+    try:
+        return int(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return default

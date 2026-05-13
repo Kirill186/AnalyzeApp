@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 
 from analyze_app.domain.entities import ChangeMetrics, CommitReport, EvidenceBlock, LLMResult, TestRunResult
-from analyze_app.infrastructure.ai.ollama_backend import OllamaBackend
+from analyze_app.infrastructure.ai.base import DiffSummaryBackend
 from analyze_app.infrastructure.analysis.pytest_runner import PytestRunner
 from analyze_app.infrastructure.analysis.ruff_runner import RuffRunner
 from analyze_app.infrastructure.git.backend import GitBackend
@@ -17,7 +17,7 @@ class CommitReportUseCase:
         git_backend: GitBackend,
         ruff_runner: RuffRunner,
         pytest_runner: PytestRunner,
-        ai_backend: OllamaBackend,
+        ai_backend: DiffSummaryBackend,
         store: SqliteStore,
     ) -> None:
         self.git_backend = git_backend

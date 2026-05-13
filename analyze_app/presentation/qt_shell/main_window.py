@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 import os
 import re
@@ -27,10 +27,9 @@ from analyze_app.application.use_cases.detect_ai_authorship import DetectAIAutho
 from analyze_app.application.use_cases.get_working_tree_report import WorkingTreeReportUseCase
 from analyze_app.application.use_cases.import_repository import ImportRepositoryUseCase
 from analyze_app.application.use_cases.list_commits import ListCommitsUseCase
-from analyze_app.domain.entities import Commit, GraphEdge, GraphNode, ProjectGraph
-from analyze_app.infrastructure.ai.ollama_backend import OllamaBackend
-from analyze_app.infrastructure.ai.project_overview_backend import ProjectOverviewBackend
+from analyze_app.domain.entities import Commit, GraphEdge, GraphNode, LLMResult, ProjectGraph, ProjectOverviewResult
 from analyze_app.infrastructure.ai.authorship import FeatureExtractor, ModelRuntime, ProbabilityCalibrator
+from analyze_app.infrastructure.ai.factory import build_diff_ai_backend, build_project_overview_backend
 from analyze_app.infrastructure.analysis.duplication_runner import DuplicationRunner
 from analyze_app.infrastructure.analysis.map.ast_map_builder import AstMapBuilder
 from analyze_app.infrastructure.analysis.mypy_runner import MypyRunner
@@ -44,10 +43,10 @@ from analyze_app.presentation.qt_shell.app_menu import build_menu
 from analyze_app.presentation.qt_shell.repo_add_dialog import RepoAddDialog
 from analyze_app.presentation.qt_shell.repo_sidebar import RepoSidebar, STANDARD_GROUPS
 from analyze_app.presentation.qt_shell.report_tabs import ReportTabs
-from analyze_app.presentation.qt_shell.settings_dialog import QualitySettingsDialog
+from analyze_app.presentation.qt_shell.settings_dialog import AISettingsDialog, QualitySettingsDialog
 from analyze_app.presentation.qt_shell.state_store import RepoListItemVM, UiStateStore
 from analyze_app.presentation.qt_shell.theme import apply_theme
-from analyze_app.shared.config import DEFAULT_CONFIG
+from analyze_app.shared.config import AppConfig, DEFAULT_CONFIG
 
 
 @dataclass(slots=True)
@@ -93,6 +92,19 @@ class RepositoryRefreshResult:
     working_tree_message: str | None
 
 
+@dataclass(slots=True)
+class OverviewGenerationResult:
+    repo_id: int
+    overview: ProjectOverviewResult
+
+
+@dataclass(slots=True)
+class CommitAISummaryResult:
+    repo_id: int
+    commit_hash: str
+    summary: LLMResult
+
+
 class RepositoryRefreshWorker(QObject):
     finished = Signal(object)
     failed = Signal(int, str)
@@ -103,12 +115,14 @@ class RepositoryRefreshWorker(QObject):
         git_backend: GitBackend,
         store: SqliteStore,
         thresholds: dict[str, list[float]],
+        ai_config: AppConfig,
     ) -> None:
         super().__init__()
         self.repo = repo
         self.git_backend = git_backend
         self.store = store
         self.thresholds = thresholds
+        self.ai_config = ai_config
 
     @Slot()
     def run(self) -> None:
@@ -147,7 +161,7 @@ class RepositoryRefreshWorker(QObject):
             self.git_backend,
             RuffRunner(),
             PytestRunner(),
-            OllamaBackend(DEFAULT_CONFIG.ollama_url, DEFAULT_CONFIG.ollama_model),
+            build_diff_ai_backend(self.ai_config),
             self.store,
         )
         try:
@@ -187,6 +201,61 @@ class RepositoryRefreshWorker(QObject):
         )
 
 
+class OverviewGenerationWorker(QObject):
+    finished = Signal(object)
+    failed = Signal(int, str)
+
+    def __init__(self, repo_id: int, repo_path: Path, git_backend: GitBackend, ai_config: AppConfig) -> None:
+        super().__init__()
+        self.repo_id = repo_id
+        self.repo_path = repo_path
+        self.git_backend = git_backend
+        self.ai_config = ai_config
+
+    @Slot()
+    def run(self) -> None:
+        try:
+            backend = build_project_overview_backend(self.ai_config)
+            overview = BuildProjectOverviewUseCase(self.git_backend, backend).execute(self.repo_path)
+        except Exception as error:  # noqa: BLE001
+            self.failed.emit(self.repo_id, str(error))
+            return
+        self.finished.emit(OverviewGenerationResult(repo_id=self.repo_id, overview=overview))
+
+
+class CommitAISummaryWorker(QObject):
+    finished = Signal(object)
+    failed = Signal(int, str, str)
+
+    def __init__(
+        self,
+        repo_id: int,
+        repo_path: Path,
+        commit_hash: str,
+        git_backend: GitBackend,
+        ai_config: AppConfig,
+    ) -> None:
+        super().__init__()
+        self.repo_id = repo_id
+        self.repo_path = repo_path
+        self.commit_hash = commit_hash
+        self.git_backend = git_backend
+        self.ai_config = ai_config
+
+    @Slot()
+    def run(self) -> None:
+        try:
+            diff_text = self.git_backend.read_commit_diff(self.repo_path, self.commit_hash)
+            backend = build_diff_ai_backend(self.ai_config)
+            summary = backend.summarize_diff(diff_text)
+        except Exception as error:  # noqa: BLE001
+            self.failed.emit(self.repo_id, self.commit_hash, str(error))
+            return
+        self.finished.emit(
+            CommitAISummaryResult(repo_id=self.repo_id, commit_hash=self.commit_hash, summary=summary)
+        )
+
+
 class MainWindow(QMainWindow):
     def __init__(self, store: SqliteStore, git_backend: GitBackend) -> None:
         super().__init__()
@@ -207,6 +276,10 @@ class MainWindow(QMainWindow):
         self.import_worker: ImportRepositoryWorker | None = None
         self.refresh_thread: QThread | None = None
         self.refresh_worker: RepositoryRefreshWorker | None = None
+        self.overview_thread: QThread | None = None
+        self.overview_worker: OverviewGenerationWorker | None = None
+        self.commit_ai_thread: QThread | None = None
+        self.commit_ai_worker: CommitAISummaryWorker | None = None
         self.active_refresh_repo_id: int | None = None
         self.refresh_queue: list[int] = []
         self.refresh_all_running = False
@@ -242,6 +315,7 @@ class MainWindow(QMainWindow):
         self.menu.run_working_tree.triggered.connect(self._refresh_current)
         self.menu.run_commit.triggered.connect(self._refresh_commits)
         self.menu.toggle_sidebar.triggered.connect(lambda: self.sidebar.setVisible(not self.sidebar.isVisible()))
+        self.menu.ai_model.triggered.connect(self._open_ai_settings)
         self.menu.quality_grades.triggered.connect(self._open_quality_settings)
 
         self.tabs.commits_tab.commit_selected.connect(self._show_commit_in_status)
@@ -257,6 +331,24 @@ class MainWindow(QMainWindow):
         dialog = QualitySettingsDialog(self.state_store, self)
         if dialog.exec() == QDialog.DialogCode.Accepted and self.current_repo:
             self._refresh_current()
+
+    def _open_ai_settings(self) -> None:
+        dialog = AISettingsDialog(self.state_store, self)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            self.status.showMessage("AI model settings saved.", 4_000)
+
+    def _ai_config(self) -> AppConfig:
+        ai_settings = self.state_store.ai_settings()
+        return replace(
+            DEFAULT_CONFIG,
+            llm_backend=ai_settings.backend,
+            llm_model_path=ai_settings.model_path,
+            llm_context_size=ai_settings.context_size,
+            llm_threads=ai_settings.threads,
+            llm_gpu_layers=ai_settings.gpu_layers,
+            ollama_url=ai_settings.ollama_url,
+            ollama_model=ai_settings.ollama_model,
+        )
 
     def _load_repositories(self) -> None:
         items = self._repository_items()
@@ -577,6 +669,7 @@ class MainWindow(QMainWindow):
             git_backend=self.git_backend,
             store=self.store,
             thresholds=self.state_store.quality_thresholds(),
+            ai_config=self._ai_config(),
         )
         self.refresh_worker.moveToThread(self.refresh_thread)
 
@@ -836,16 +929,54 @@ class MainWindow(QMainWindow):
     def _regenerate_overview(self) -> None:
         if not self.current_repo:
             return
-        repo_path = Path(self.current_repo.working_path)
-        backend = ProjectOverviewBackend(DEFAULT_CONFIG.ollama_url, DEFAULT_CONFIG.ollama_model)
-        use_case = BuildProjectOverviewUseCase(self.git_backend, backend)
-        try:
-            overview = use_case.execute(repo_path)
-        except Exception as error:  # noqa: BLE001
-            QMessageBox.warning(self, "AI overview", str(error))
+        if self.overview_thread is not None and self.overview_thread.isRunning():
+            self.status.showMessage("Project overview generation is already running.", 4_000)
             return
-        self.store.save_project_overview(self.current_repo.repo_id, overview.summary, overview.model_info)
-        self.tabs.overview_tab.set_summary_markdown(overview.summary)
+
+        repo_path = Path(self.current_repo.working_path)
+        repo_id = self.current_repo.repo_id
+        self.tabs.overview_tab.set_summary_loading()
+        self.status.showMessage("Project overview generation started.", 4_000)
+
+        self.overview_thread = QThread(self)
+        self.overview_worker = OverviewGenerationWorker(
+            repo_id=repo_id,
+            repo_path=repo_path,
+            git_backend=self.git_backend,
+            ai_config=self._ai_config(),
+        )
+        self.overview_worker.moveToThread(self.overview_thread)
+        self.overview_thread.started.connect(self.overview_worker.run)
+        self.overview_worker.finished.connect(self._on_overview_generated)
+        self.overview_worker.failed.connect(self._on_overview_generation_failed)
+        self.overview_worker.finished.connect(self.overview_thread.quit)
+        self.overview_worker.failed.connect(self.overview_thread.quit)
+        self.overview_thread.finished.connect(self._cleanup_overview_worker)
+        self.overview_thread.start()
+
+    @Slot(object)
+    def _on_overview_generated(self, result: OverviewGenerationResult) -> None:
+        self.store.save_project_overview(result.repo_id, result.overview.summary, result.overview.model_info)
+        if self.current_repo and self.current_repo.repo_id == result.repo_id:
+            self.tabs.overview_tab.set_summary_markdown(result.overview.summary)
+            self.status.showMessage("Project overview updated.", 5_000)
+
+    @Slot(int, str)
+    def _on_overview_generation_failed(self, repo_id: int, error: str) -> None:
+        if self.current_repo and self.current_repo.repo_id == repo_id:
+            cached_overview = self.store.load_project_overview(repo_id)
+            summary = cached_overview[0] if cached_overview else "Описание пока не сгенерировано."
+            self.tabs.overview_tab.set_summary_markdown(summary)
+        QMessageBox.warning(self, "AI overview", error)
+
+    @Slot()
+    def _cleanup_overview_worker(self) -> None:
+        if self.overview_worker:
+            self.overview_worker.deleteLater()
+            self.overview_worker = None
+        if self.overview_thread:
+            self.overview_thread.deleteLater()
+            self.overview_thread = None
 
     def _refresh_commits(self) -> None:
         if not self.current_repo:
@@ -872,7 +1003,7 @@ class MainWindow(QMainWindow):
             self.git_backend,
             RuffRunner(),
             PytestRunner(),
-            OllamaBackend(DEFAULT_CONFIG.ollama_url, DEFAULT_CONFIG.ollama_model),
+            build_diff_ai_backend(self._ai_config()),
             self.store,
         )
         try:
@@ -948,12 +1079,56 @@ class MainWindow(QMainWindow):
     def _describe_commit_with_ai(self, commit_hash: str) -> None:
         if not self.current_repo:
             return
+        if self.commit_ai_thread is not None and self.commit_ai_thread.isRunning():
+            self.status.showMessage("Commit description generation is already running.", 4_000)
+            return
+
         repo_path = Path(self.current_repo.working_path)
-        diff_text = self.git_backend.read_commit_diff(repo_path, commit_hash)
-        backend = OllamaBackend(DEFAULT_CONFIG.ollama_url, DEFAULT_CONFIG.ollama_model)
-        result = backend.summarize_diff(diff_text)
-        self.tabs.commits_tab.set_commit_summary(commit_hash, result.summary, result.model_info)
-        self.status.showMessage(f"Описание коммита обновлено: {commit_hash[:10]}", 5_000)
+        repo_id = self.current_repo.repo_id
+        self.tabs.commits_tab.set_commit_summary_loading(commit_hash)
+        self.status.showMessage(f"Генерация описания коммита началась: {commit_hash[:10]}", 4_000)
+
+        self.commit_ai_thread = QThread(self)
+        self.commit_ai_worker = CommitAISummaryWorker(
+            repo_id=repo_id,
+            repo_path=repo_path,
+            commit_hash=commit_hash,
+            git_backend=self.git_backend,
+            ai_config=self._ai_config(),
+        )
+        self.commit_ai_worker.moveToThread(self.commit_ai_thread)
+        self.commit_ai_thread.started.connect(self.commit_ai_worker.run)
+        self.commit_ai_worker.finished.connect(self._on_commit_ai_summary_finished)
+        self.commit_ai_worker.failed.connect(self._on_commit_ai_summary_failed)
+        self.commit_ai_worker.finished.connect(self.commit_ai_thread.quit)
+        self.commit_ai_worker.failed.connect(self.commit_ai_thread.quit)
+        self.commit_ai_thread.finished.connect(self._cleanup_commit_ai_worker)
+        self.commit_ai_thread.start()
+
+    @Slot(object)
+    def _on_commit_ai_summary_finished(self, result: CommitAISummaryResult) -> None:
+        if self.current_repo and self.current_repo.repo_id == result.repo_id:
+            self.tabs.commits_tab.set_commit_summary(
+                result.commit_hash,
+                result.summary.summary,
+                result.summary.model_info,
+            )
+            self.status.showMessage(f"Описание коммита обновлено: {result.commit_hash[:10]}", 5_000)
+
+    @Slot(int, str, str)
+    def _on_commit_ai_summary_failed(self, repo_id: int, commit_hash: str, error: str) -> None:
+        if self.current_repo and self.current_repo.repo_id == repo_id:
+            self.tabs.commits_tab.set_commit_summary(commit_hash, f"AI summary unavailable: {error}", "n/a")
+        QMessageBox.warning(self, "AI commit overview", error)
+
+    @Slot()
+    def _cleanup_commit_ai_worker(self) -> None:
+        if self.commit_ai_worker:
+            self.commit_ai_worker.deleteLater()
+            self.commit_ai_worker = None
+        if self.commit_ai_thread:
+            self.commit_ai_thread.deleteLater()
+            self.commit_ai_thread = None
 
     def _show_commit_in_status(self, commit_hash: str) -> None:
         self.status.showMessage(f"Selected commit: {commit_hash}", 4_000)

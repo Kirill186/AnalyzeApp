@@ -13,8 +13,8 @@ from analyze_app.application.use_cases.get_working_tree_report import WorkingTre
 from analyze_app.application.use_cases.detect_ai_authorship import DetectAIAuthorshipUseCase
 from analyze_app.application.use_cases.import_repository import ImportRepositoryUseCase
 from analyze_app.application.use_cases.list_commits import ListCommitsUseCase
-from analyze_app.infrastructure.ai.ollama_backend import OllamaBackend
-from analyze_app.infrastructure.ai.project_overview_backend import ProjectOverviewBackend
+from analyze_app.infrastructure.ai.base import DiffSummaryBackend
+from analyze_app.infrastructure.ai.factory import build_diff_ai_backend, build_project_overview_backend
 from analyze_app.infrastructure.analysis.map.ast_map_builder import AstMapBuilder
 from analyze_app.infrastructure.analysis.pytest_runner import PytestRunner
 from analyze_app.infrastructure.analysis.ruff_runner import RuffRunner
@@ -24,11 +24,11 @@ from analyze_app.infrastructure.storage.sqlite_store import SqliteStore
 from analyze_app.shared.config import DEFAULT_CONFIG
 
 
-def _build_services(db_path: Path | None = None) -> tuple[GitBackend, SqliteStore, OllamaBackend, RuffRunner, PytestRunner]:
+def _build_services(db_path: Path | None = None) -> tuple[GitBackend, SqliteStore, DiffSummaryBackend, RuffRunner, PytestRunner]:
     config = DEFAULT_CONFIG
     store = SqliteStore(db_path or config.db_path)
     git_backend = GitBackend()
-    ai_backend = OllamaBackend(config.ollama_url, config.ollama_model)
+    ai_backend = build_diff_ai_backend(config)
     return git_backend, store, ai_backend, RuffRunner(), PytestRunner()
 
 
@@ -99,7 +99,7 @@ def cmd_project_map(args: argparse.Namespace) -> None:
 
 def cmd_project_overview(args: argparse.Namespace) -> None:
     git_backend, _, *_ = _build_services(args.db)
-    ai_backend = ProjectOverviewBackend(DEFAULT_CONFIG.ollama_url, DEFAULT_CONFIG.ollama_model)
+    ai_backend = build_project_overview_backend(DEFAULT_CONFIG)
     use_case = BuildProjectOverviewUseCase(git_backend, ai_backend)
     overview = use_case.execute(Path(args.repo_path), max_files=args.max_files)
     print(f"model: {overview.model_info}")

@@ -7,7 +7,7 @@
 - Возможности Этапа 1 и Этапа 2:
   - импорт репозитория (локальный путь или URL) и сохранение в SQLite;
   - просмотр истории коммитов (`git log`);
-  - отчёт по коммиту (diff + метрики + Ruff + pytest + AI-summary через Ollama);
+  - отчёт по коммиту (diff + метрики + Ruff + pytest + AI-summary через локальный LLM backend);
   - карта проекта (AST graph) + hotspot score;
   - AI-описание сути проекта и его структуры (1-2 абзаца для страницы репозитория);
   - отчёт по Working Tree;
@@ -34,12 +34,39 @@ python -m analyze_app.cli enqueue-jobs 1 /path/to/repo --commit-hash <commit_has
 python -m analyze_app.cli gui
 ```
 
-## Настройка AI-summary (Ollama)
+## Настройка AI-summary (GGUF без Ollama)
 
-По умолчанию используется модель `llama3.2:latest`.
+По умолчанию приложение использует прямой backend `llama_cpp`: модель загружается через `llama-cpp-python`, без запущенного Ollama-сервиса. Можно указать обычный путь к `.gguf` файлу или ссылку на уже скачанную модель из кеша Ollama.
 
 ```bash
-ollama pull llama3.2:latest
+export ANALYZE_APP_LLM_BACKEND="llama_cpp"
+export ANALYZE_APP_LLM_MODEL_PATH="ollama://llama3.2:latest"
+export ANALYZE_APP_LLM_CONTEXT_SIZE="4096"
+export ANALYZE_APP_LLM_THREADS="0"
+export ANALYZE_APP_LLM_GPU_LAYERS="0"
+```
+
+`ANALYZE_APP_LLM_THREADS=0` оставляет выбор числа CPU-потоков за `llama.cpp`. В desktop-приложении backend можно переключить через `Settings -> AI Model`: `GGUF / llama.cpp` работает напрямую с локальной моделью, а `Ollama service` использует запущенный сервис Ollama.
+
+PowerShell:
+
+```powershell
+$env:ANALYZE_APP_LLM_BACKEND = "llama_cpp"
+$env:ANALYZE_APP_LLM_MODEL_PATH = "ollama://llama3.2:latest"
+```
+
+Для отдельного GGUF-файла укажите полный путь, например `C:\models\model.gguf`.
+
+Для Windows CPU wheel:
+
+```powershell
+python -m pip install --only-binary=:all: --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cpu "llama-cpp-python==0.3.0"
+```
+
+Если нужно временно вернуться к Ollama, установите optional dependency `analyze-app[ollama]` и переключите backend:
+
+```bash
+export ANALYZE_APP_LLM_BACKEND="ollama"
 export ANALYZE_APP_OLLAMA_MODEL="llama3.2:latest"
 export ANALYZE_APP_OLLAMA_URL="http://127.0.0.1:11434/api/generate"
 ```

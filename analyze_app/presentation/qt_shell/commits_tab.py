@@ -36,6 +36,7 @@ class CommitsTab(QWidget):
         self._selected_hash: str | None = None
         self._commits: list[Commit] = []
         self._summary_text = ""
+        self._summary_loading_hash: str | None = None
         self._show_details = False
         self._loading = False
 
@@ -54,6 +55,7 @@ class CommitsTab(QWidget):
         self._loading = False
         self._commits = commits
         self._selected_hash = commits[0].hash if commits else None
+        self._summary_loading_hash = None
         self._show_details = False
         if self._selected_hash:
             self.commit_selected.emit(self._selected_hash)
@@ -64,6 +66,7 @@ class CommitsTab(QWidget):
         self._selected_hash = None
         self._commits = []
         self._summary_text = ""
+        self._summary_loading_hash = None
         self._show_details = False
         self._render()
 
@@ -72,10 +75,19 @@ class CommitsTab(QWidget):
         self._selected_hash = None
         self._commits = []
         self._summary_text = ""
+        self._summary_loading_hash = None
         self._show_details = False
         self._render()
 
+    def set_commit_summary_loading(self, commit_hash: str) -> None:
+        self._selected_hash = commit_hash
+        self._summary_loading_hash = commit_hash
+        self._summary_text = ""
+        self._show_details = True
+        self._render()
+
     def set_commit_summary(self, commit_hash: str, summary: str, model_info: str) -> None:
+        self._summary_loading_hash = None
         self._summary_text = f"{commit_hash[:10]}\nМодель: {model_info}\n\n{summary}"
         self._show_details = self._selected_hash == commit_hash
         self._render()
@@ -100,6 +112,7 @@ class CommitsTab(QWidget):
                     "date": commit.authored_at.astimezone().strftime("%Y-%m-%d %H:%M"),
                     "message": commit.message.replace("\n", " ").strip() or "(без сообщения)",
                     "description": self._summary_text if self._selected_hash == commit.hash and self._summary_text else "",
+                    "descriptionLoading": self._summary_loading_hash == commit.hash,
                 }
             )
         payload = {

@@ -26,6 +26,7 @@ body{font-family:Inter,Segoe UI,sans-serif;color:var(--text);background:radial-g
 .desc{margin-top:10px;white-space:pre-wrap;line-height:1.45;color:#dce7ff}
 .action{margin-top:14px;padding:10px;border-radius:12px;border:1px solid #3b5f9f;background:rgba(52,92,168,.14);font-size:13px}
 .action button{margin-top:8px;padding:8px 12px;border-radius:10px;border:1px solid #6990d5;background:#1a3057;color:#ddebff;cursor:pointer}
+.action button:disabled{opacity:.65;cursor:default}
 .empty{color:var(--muted)}.commit-card{cursor:pointer}
 .loader{display:inline-block;width:18px;height:18px;border:3px solid rgba(239,244,255,.22);border-top-color:var(--accent);border-radius:50%;animation:spin .8s linear infinite;vertical-align:middle;margin-right:8px}
 @keyframes spin{to{transform:rotate(360deg)}}
@@ -95,13 +96,18 @@ function paintDetails(){
   }
   const commit = commits.find(c => c.hash === selected);
   if(!commit){ el.innerHTML = '<div class="empty">Выберите коммит на графе или в ленте.</div>'; return; }
+  const descriptionLoading = Boolean(commit.descriptionLoading);
+  const description = descriptionLoading
+    ? '<span class="loader"></span>Генерация описания коммита...'
+    : esc(commit.description || 'Описание пока не сгенерировано.');
+  const buttonLabel = descriptionLoading ? 'Генерация...' : 'Сделать AI-обзор';
   el.innerHTML = `
     <div class="badge">${esc(commit.shortHash)}</div>
     <h3 style="margin:10px 0 4px">${esc(commit.message || '(без сообщения)')}</h3>
     <div class="meta">${esc(commit.author)} • ${esc(commit.date)}</div>
-    <div class="desc">${esc(commit.description || 'Описание пока не сгенерировано.')}</div>
+    <div class="desc">${description}</div>
     <div class="action">Предложение: сделать AI-обзор этого коммита в AnalyzeApp.
-      <br/><button onclick="askAi('${commit.hash}')">Сделать AI-обзор</button>
+      <br/><button ${descriptionLoading ? 'disabled' : ''} onclick="askAi('${commit.hash}')">${buttonLabel}</button>
     </div>`;
 }
 
