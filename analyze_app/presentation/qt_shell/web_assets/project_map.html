@@ -218,6 +218,29 @@
       color: #d7e7ff;
     }
 
+    .actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 12px;
+    }
+
+    .detail-action {
+      border: 1px solid rgba(118, 168, 255, 0.55);
+      border-radius: 10px;
+      background: rgba(38, 74, 132, 0.72);
+      color: #eef5ff;
+      cursor: pointer;
+      font-size: 12px;
+      font-weight: 650;
+      padding: 7px 10px;
+    }
+
+    .detail-action:hover {
+      border-color: rgba(165, 200, 255, 0.9);
+      background: rgba(54, 94, 160, 0.86);
+    }
+
     .legend-list {
       margin-top: 10px;
       display: grid;
@@ -379,6 +402,8 @@
       selectedNodeId: null,
       hoveredNodeId: null,
       camera: { x: 0, y: 0, scale: 1 },
+      cameraDirty: false,
+      world: { width: 0, height: 0 },
     };
 
     const nodeById = new Map(state.nodes.map((n) => [n.id, n]));
@@ -401,6 +426,43 @@
     const modeButtons = [...document.querySelectorAll('.mode-btn')];
 
     const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
+    const enc = encodeURIComponent;
+
+    function sendToHost(action, filePath) {
+      const q = [`action=${enc(action)}`];
+      if (filePath) q.push(`file=${enc(filePath)}`);
+      window.location.href = `analyzeapp://project-map?${q.join('&')}`;
+    }
+
+    function hashString(value) {
+      let hash = 2166136261;
+      const text = String(value || '');
+      for (let i = 0; i < text.length; i += 1) {
+        hash ^= text.charCodeAt(i);
+        hash = Math.imul(hash, 16777619);
+      }
+      return hash >>> 0;
+    }
+
+    function deterministicOffset(value, span) {
+      return ((hashString(value) % 1000) / 999 - 0.5) * span;
+    }
+
+    function maxHotspot() {
+      return Math.max(...state.nodes.map((n) => n.hotspot), 0);
+    }
+
+    function radiusForNode(node) {
+      const baseRadius = node.kind === 'file' ? 11 : node.kind === 'class' ? 9 : 7;
+      const hotspotBoost = state.mode === MODE.HOTSPOT ? clamp(node.hotspot / (maxHotspot() || 1), 0, 1) * 5 : 0;
+      return baseRadius + hotspotBoost;
+    }
+
+    function clampNodeToWorld(node) {
+      const margin = node.radius + 24;
+      node.x = clamp(node.x, margin, Math.max(margin, state.world.width - margin));
+      node.y = clamp(node.y, margin, Math.max(margin, state.world.height - margin));
+    }
 
     function colorForKind(kind) {
       if (kind === 'file' || kind === 'module') return getComputedStyle(document.documentElement).getPropertyValue('--file').trim();
@@ -421,24 +483,49 @@
     function initializePositions() {
       const w = canvas.clientWidth || 800;
       const h = canvas.clientHeight || 500;
-      const cols = Math.max(1, Math.floor(Math.sqrt(state.nodes.length)));
+      const spacing = 76;
+      const cols = Math.max(1, Math.ceil(Math.sqrt(state.nodes.length || 1) * 1.25));
+      const rows = Math.max(1, Math.ceil((state.nodes.length || 1) / cols));
+      state.world.width = Math.max(w, cols * spacing + 140);
+      state.world.height = Math.max(h, rows * spacing + 140);
+
       state.nodes.forEach((node, i) => {
         const col = i % cols;
         const row = Math.floor(i / cols);
-        const jitterX = (Math.random() - 0.5) * 80;
-        const jitterY = (Math.random() - 0.5) * 70;
-        node.x = (col + 0.5) * (w / cols) + jitterX;
-        node.y = (row + 0.6) * 90 + jitterY;
-        node.vx = (Math.random() - 0.5) * 0.8;
-        node.vy = (Math.random() - 0.5) * 0.8;
+        node.radius = radiusForNode(node);
+        node.x = 70 + col * spacing + deterministicOffset(`${node.id}:x`, 12);
+        node.y = 70 + row * spacing + deterministicOffset(`${node.id}:y`, 12);
+        node.vx = deterministicOffset(`${node.id}:vx`, 0.8);
+        node.vy = deterministicOffset(`${node.id}:vy`, 0.8);
+        clampNodeToWorld(node);
       });
+
+      for (let i = 0; i < 80; i += 1) {
+        applyLayoutForces();
+      }
+      centerCamera();
+    }
+
+    function centerCamera() {
+      const width = canvas.clientWidth || 800;
+      const height = canvas.clientHeight || 500;
+      const worldWidth = state.world.width || width;
+      const worldHeight = state.world.height || height;
+      const scale = clamp(Math.min((width - 48) / worldWidth, (height - 48) / worldHeight), 0.35, 1);
+      state.camera.scale = scale;
+      state.camera.x = (width - worldWidth * scale) / 2;
+      state.camera.y = (height - worldHeight * scale) / 2;
     }
 
     function applyLayoutForces() {
-      const repulsion = 9000;
-      const attraction = 0.011;
-      const idealEdgeLength = 120;
-      const damping = 0.9;
+      const repulsion = 2600;
+      const attraction = 0.008;
+      const idealEdgeLength = 105;
+      const damping = 0.84;
+
+      state.nodes.forEach((node) => {
+        node.radius = radiusForNode(node);
+      });
 
       for (let i = 0; i < state.nodes.length; i += 1) {
         const a = state.nodes[i];
@@ -447,15 +534,23 @@
           let dx = a.x - b.x;
           let dy = a.y - b.y;
           let distSq = dx * dx + dy * dy;
-          if (distSq < 20) distSq = 20;
-          const force = repulsion / distSq;
+          if (distSq < 0.01) {
+            const angle = (hashString(`${a.id}:${b.id}`) % 628) / 100;
+            dx = Math.cos(angle);
+            dy = Math.sin(angle);
+            distSq = 1;
+          }
           const dist = Math.sqrt(distSq);
           dx /= dist;
           dy /= dist;
-          a.vx += dx * force;
-          a.vy += dy * force;
-          b.vx -= dx * force;
-          b.vy -= dy * force;
+          const force = Math.min(repulsion / distSq, 1.8);
+          const minDist = a.radius + b.radius + 16;
+          const collisionForce = dist < minDist ? (minDist - dist) * 0.08 : 0;
+          const totalForce = force + collisionForce;
+          a.vx += dx * totalForce;
+          a.vy += dy * totalForce;
+          b.vx -= dx * totalForce;
+          b.vy -= dy * totalForce;
         }
       }
 
@@ -476,16 +571,52 @@
         target.vy -= ny * force;
       });
 
-      const width = canvas.clientWidth;
-      const height = canvas.clientHeight;
       state.nodes.forEach((node) => {
         node.vx *= damping;
         node.vy *= damping;
+        node.vx = clamp(node.vx, -5, 5);
+        node.vy = clamp(node.vy, -5, 5);
         node.x += node.vx;
         node.y += node.vy;
-        node.x = clamp(node.x, 25, width - 25);
-        node.y = clamp(node.y, 25, height - 25);
+        clampNodeToWorld(node);
       });
+
+      resolveCollisions(2);
+    }
+
+    function resolveCollisions(iterations) {
+      for (let pass = 0; pass < iterations; pass += 1) {
+        for (let i = 0; i < state.nodes.length; i += 1) {
+          const a = state.nodes[i];
+          for (let j = i + 1; j < state.nodes.length; j += 1) {
+            const b = state.nodes[j];
+            let dx = a.x - b.x;
+            let dy = a.y - b.y;
+            let dist = Math.sqrt(dx * dx + dy * dy);
+            if (dist < 0.01) {
+              const angle = (hashString(`${a.id}:${b.id}:resolve`) % 628) / 100;
+              dx = Math.cos(angle);
+              dy = Math.sin(angle);
+              dist = 1;
+            }
+            const minDist = a.radius + b.radius + 12;
+            if (dist >= minDist) continue;
+            const shift = (minDist - dist) / 2;
+            const nx = dx / dist;
+            const ny = dy / dist;
+            a.x += nx * shift;
+            a.y += ny * shift;
+            b.x -= nx * shift;
+            b.y -= ny * shift;
+            a.vx *= 0.72;
+            a.vy *= 0.72;
+            b.vx *= 0.72;
+            b.vy *= 0.72;
+            clampNodeToWorld(a);
+            clampNodeToWorld(b);
+          }
+        }
+      }
     }
 
     function drawGraph() {
@@ -497,7 +628,7 @@
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       ctx.clearRect(0, 0, width, height);
 
-      const maxHotspot = Math.max(...state.nodes.map((n) => n.hotspot), 0);
+      const hotMax = maxHotspot();
 
       ctx.save();
       ctx.translate(state.camera.x, state.camera.y);
@@ -517,15 +648,13 @@
       });
 
       state.nodes.forEach((node) => {
-        const baseRadius = node.kind === 'file' ? 11 : node.kind === 'class' ? 9 : 7;
-        const hotspotBoost = state.mode === MODE.HOTSPOT ? clamp(node.hotspot / (maxHotspot || 1), 0, 1) * 5 : 0;
-        const radius = baseRadius + hotspotBoost;
+        const radius = radiusForNode(node);
         node.radius = radius;
 
         const hovered = node.id === state.hoveredNodeId;
         const selected = node.id === state.selectedNodeId;
         const fill = state.mode === MODE.HOTSPOT
-          ? hotspotColor(node.hotspot, maxHotspot)
+          ? hotspotColor(node.hotspot, hotMax)
           : colorForKind(node.kind);
 
         if (selected || hovered) {
@@ -553,7 +682,7 @@
       const files = state.nodes.filter((n) => n.kind === 'file' || n.kind === 'module').length;
       const classes = state.nodes.filter((n) => n.kind === 'class').length;
       const functions = state.nodes.filter((n) => n.kind === 'function').length;
-      const hotspotMax = Math.max(...state.nodes.map((n) => n.hotspot), 0);
+      const hotspotMax = maxHotspot();
 
       summaryEl.innerHTML = [
         ['Nodes', total],
@@ -607,6 +736,9 @@
           <span class="tag">outgoing: ${out.length}</span>
           <span class="tag">incoming: ${inc.length}</span>
         </div>
+        <div class="actions">
+          <button class="detail-action" type="button" data-action="open" data-file="${escapeHtml(node.path)}">Open in editor</button>
+        </div>
       `;
 
       const relatedIds = [...new Set([...out, ...inc])].slice(0, 30);
@@ -655,6 +787,13 @@
         button.addEventListener('click', () => applyMode(button.dataset.mode));
       });
 
+      detailsEl.addEventListener('click', (event) => {
+        const target = event.target instanceof Element ? event.target.closest('[data-action="open"]') : null;
+        if (!target) return;
+        const filePath = target.getAttribute('data-file') || '';
+        if (filePath) sendToHost('open', filePath);
+      });
+
       let dragging = false;
       let lastX = 0;
       let lastY = 0;
@@ -681,6 +820,7 @@
           const dy = event.clientY - lastY;
           state.camera.x += dx;
           state.camera.y += dy;
+          state.cameraDirty = true;
           lastX = event.clientX;
           lastY = event.clientY;
           return;
@@ -707,6 +847,7 @@
         const direction = event.deltaY > 0 ? -0.09 : 0.09;
         const prevScale = state.camera.scale;
         state.camera.scale = clamp(state.camera.scale + direction, 0.4, 2.4);
+        state.cameraDirty = true;
 
         const rect = canvas.getBoundingClientRect();
         const x = event.clientX - rect.left;
@@ -720,6 +861,7 @@
       }, { passive: false });
 
       window.addEventListener('resize', () => {
+        if (!state.cameraDirty) centerCamera();
         drawGraph();
       });
     }

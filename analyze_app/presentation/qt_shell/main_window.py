@@ -43,7 +43,7 @@ from analyze_app.presentation.qt_shell.app_menu import build_menu
 from analyze_app.presentation.qt_shell.repo_add_dialog import RepoAddDialog
 from analyze_app.presentation.qt_shell.repo_sidebar import RepoSidebar, STANDARD_GROUPS
 from analyze_app.presentation.qt_shell.report_tabs import ReportTabs
-from analyze_app.presentation.qt_shell.settings_dialog import AISettingsDialog, QualitySettingsDialog
+from analyze_app.presentation.qt_shell.settings_dialog import AISettingsDialog, CodeEditorSettingsDialog, QualitySettingsDialog
 from analyze_app.presentation.qt_shell.state_store import RepoListItemVM, UiStateStore
 from analyze_app.presentation.qt_shell.theme import apply_theme
 from analyze_app.shared.config import AppConfig, DEFAULT_CONFIG
@@ -315,13 +315,15 @@ class MainWindow(QMainWindow):
         self.menu.run_working_tree.triggered.connect(self._refresh_current)
         self.menu.run_commit.triggered.connect(self._refresh_commits)
         self.menu.toggle_sidebar.triggered.connect(lambda: self.sidebar.setVisible(not self.sidebar.isVisible()))
+        self.menu.code_editor.triggered.connect(self._open_editor_settings)
         self.menu.ai_model.triggered.connect(self._open_ai_settings)
         self.menu.quality_grades.triggered.connect(self._open_quality_settings)
 
         self.tabs.commits_tab.commit_selected.connect(self._show_commit_in_status)
         self.tabs.commits_tab.ai_summary_requested.connect(self._describe_commit_with_ai)
         self.tabs.workspace_tab.stage_requested.connect(self._stage_workspace_file)
-        self.tabs.workspace_tab.open_requested.connect(self._open_workspace_file)
+        self.tabs.workspace_tab.open_requested.connect(self._open_repository_file)
+        self.tabs.project_map_tab.open_requested.connect(self._open_repository_file)
 
     def _bind_tab_actions(self) -> None:
         self.tabs.overview_tab.regenerate_requested.connect(self._regenerate_overview)
@@ -336,6 +338,11 @@ class MainWindow(QMainWindow):
         dialog = AISettingsDialog(self.state_store, self)
         if dialog.exec() == QDialog.DialogCode.Accepted:
             self.status.showMessage("AI model settings saved.", 4_000)
+
+    def _open_editor_settings(self) -> None:
+        dialog = CodeEditorSettingsDialog(self.state_store, self)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            self.status.showMessage("Code editor settings saved.", 4_000)
 
     def _ai_config(self) -> AppConfig:
         ai_settings = self.state_store.ai_settings()
@@ -1060,21 +1067,32 @@ class MainWindow(QMainWindow):
         self.status.showMessage(f"Staged: {file_path}", 4_000)
         self._refresh_current()
 
-    def _open_workspace_file(self, file_path: str) -> None:
+    def _open_repository_file(self, file_path: str) -> None:
         if not self.current_repo:
             return
-        absolute_path = Path(self.current_repo.working_path) / file_path
-        editor = _detect_editor_command()
-        if editor:
-            subprocess.Popen([*editor, str(absolute_path)])  # noqa: S603
-            self.status.showMessage(f"Opened in editor: {file_path}", 4_000)
+        repo_path = Path(self.current_repo.working_path).resolve()
+        absolute_path = (repo_path / file_path).resolve()
+        try:
+            absolute_path.relative_to(repo_path)
+        except ValueError:
+            self.status.showMessage(f"Некорректный путь файла: {file_path}", 5_000)
             return
+
+        editor = _detect_editor_command(self.state_store.editor_command())
+        if editor:
+            try:
+                subprocess.Popen([*editor, str(absolute_path)])  # noqa: S603
+            except OSError as error:
+                self.status.showMessage(f"Не удалось запустить редактор: {error}", 5_000)
+            else:
+                self.status.showMessage(f"Opened in editor: {file_path}", 4_000)
+                return
+
         opened = QDesktopServices.openUrl(QUrl.fromLocalFile(str(absolute_path)))
         if opened:
             self.status.showMessage(f"Opened: {file_path}", 4_000)
             return
         self.status.showMessage(f"Не удалось открыть файл: {file_path}", 5_000)
-
 
     def _describe_commit_with_ai(self, commit_hash: str) -> None:
         if not self.current_repo:
@@ -1573,13 +1591,23 @@ def _grade_upper_better(value: float, thresholds: list[float]) -> str:
     return "E"
 
 
-def _detect_editor_command() -> list[str] | None:
-    env_value = os.environ.get("ANALYZEAPP_EDITOR") or os.environ.get("EDITOR")
-    if env_value:
-        parts = shlex.split(env_value)
+def _detect_editor_command(configured_value: str = "") -> list[str] | None:
+    for value in (configured_value, os.environ.get("ANALYZEAPP_EDITOR") or os.environ.get("EDITOR") or ""):
+        parts = _split_editor_command(value)
         if parts:
             return parts
     for candidate in ("code", "zed", "subl", "nvim", "vim"):
         if shutil.which(candidate):
             return [candidate]
     return None
+
+
+def _split_editor_command(value: str) -> list[str]:
+    value = value.strip()
+    if not value:
+        return []
+    try:
+        parts = shlex.split(value, posix=os.name != "nt")
+    except ValueError:
+        parts = [value]
+    return [part.strip().strip("\"'") for part in parts if part.strip().strip("\"'")]

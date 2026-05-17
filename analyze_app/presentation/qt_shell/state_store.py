@@ -195,6 +195,12 @@ class UiStateStore:
     def reset_quality_thresholds(self) -> None:
         self.set_quality_thresholds({key: value.copy() for key, value in DEFAULT_QUALITY_THRESHOLDS.items()})
 
+    def editor_command(self) -> str:
+        return str(self.settings.value("editor/command", "") or "").strip()
+
+    def set_editor_command(self, command: str) -> None:
+        self.settings.setValue("editor/command", command.strip())
+
     def ai_settings(self) -> AISettings:
         backend = str(self.settings.value("ai/backend", DEFAULT_CONFIG.llm_backend) or DEFAULT_CONFIG.llm_backend)
         backend = backend if backend in {"llama_cpp", "ollama"} else "llama_cpp"

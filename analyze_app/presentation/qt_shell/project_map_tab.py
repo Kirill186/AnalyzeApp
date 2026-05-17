@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 from pathlib import Path
+from urllib.parse import parse_qs
 
-from PySide6.QtCore import QSignalBlocker, QUrl
+from PySide6.QtCore import QSignalBlocker, QUrl, Signal
+from PySide6.QtWebEngineCore import QWebEnginePage
 from PySide6.QtWebEngineWidgets import QWebEngineView
 from PySide6.QtWidgets import QComboBox, QHBoxLayout, QLabel, QVBoxLayout, QWidget
 
@@ -10,7 +12,26 @@ from analyze_app.domain.entities import ProjectGraph
 from analyze_app.presentation.qt_shell.web_view_utils import render_html_template
 
 
+class ProjectMapWebPage(QWebEnginePage):
+    open_requested = Signal(str)
+
+    def acceptNavigationRequest(self, url: QUrl, nav_type, is_main_frame: bool) -> bool:  # type: ignore[override]
+        if url.scheme() != "analyzeapp":
+            return super().acceptNavigationRequest(url, nav_type, is_main_frame)
+        if url.host().lower() != "project-map":
+            return False
+
+        params = parse_qs(url.query())
+        action = (params.get("action") or [""])[0].lower()
+        file_path = (params.get("file") or [""])[0]
+        if action == "open" and file_path:
+            self.open_requested.emit(file_path)
+        return False
+
+
 class ProjectMapTab(QWidget):
+    open_requested = Signal(str)
+
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
         self.mode_combo = QComboBox()
@@ -22,6 +43,9 @@ class ProjectMapTab(QWidget):
         top.addStretch()
 
         self.web = QWebEngineView()
+        self.page = ProjectMapWebPage(self.web)
+        self.page.open_requested.connect(self.open_requested.emit)
+        self.web.setPage(self.page)
 
         root = QVBoxLayout(self)
         root.addLayout(top)

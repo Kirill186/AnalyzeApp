@@ -77,6 +77,54 @@ class QualitySettingsDialog(QDialog):
         self.accept()
 
 
+class CodeEditorSettingsDialog(QDialog):
+    def __init__(self, state_store: UiStateStore, parent=None) -> None:
+        super().__init__(parent)
+        self.state_store = state_store
+        self.setWindowTitle("Code Editor")
+        self.setMinimumWidth(720)
+
+        root = QVBoxLayout(self)
+        root.addWidget(QLabel("Команда редактора для открытия файлов из AnalyzeApp. Пустое поле включает автоопределение."))
+
+        group = QGroupBox("Editor")
+        form = QFormLayout(group)
+
+        self.editor_command = QLineEdit(self.state_store.editor_command())
+        self.editor_command.setPlaceholderText("code --reuse-window")
+        browse_button = QPushButton("Browse…")
+        browse_button.clicked.connect(self._browse_editor)
+        auto_button = QPushButton("Auto")
+        auto_button.clicked.connect(self.editor_command.clear)
+
+        editor_row = QHBoxLayout()
+        editor_row.addWidget(self.editor_command, 1)
+        editor_row.addWidget(browse_button)
+        editor_row.addWidget(auto_button)
+        form.addRow("Command", editor_row)
+
+        root.addWidget(group)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        buttons.accepted.connect(self._accept)
+        buttons.rejected.connect(self.reject)
+        root.addWidget(buttons)
+
+    def _browse_editor(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Select editor executable",
+            "",
+            "Applications (*.exe);;All files (*)",
+        )
+        if path:
+            self.editor_command.setText(f'"{path}"')
+
+    def _accept(self) -> None:
+        self.state_store.set_editor_command(self.editor_command.text())
+        self.accept()
+
+
 class AISettingsDialog(QDialog):
     def __init__(self, state_store: UiStateStore, parent=None) -> None:
         super().__init__(parent)

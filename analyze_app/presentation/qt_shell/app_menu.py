@@ -15,6 +15,7 @@ class AppMenuActions:
     run_working_tree: QAction
     run_commit: QAction
     toggle_sidebar: QAction
+    code_editor: QAction
     ai_model: QAction
     quality_grades: QAction
 
@@ -38,6 +39,7 @@ def build_menu(window: QMainWindow) -> AppMenuActions:
     run_commit = analyze_menu.addAction("Run Commit Analysis")
 
     settings_menu = menu_bar.addMenu("Settings")
+    code_editor = settings_menu.addAction("Code Editor")
     ai_model = settings_menu.addAction("AI Model")
     quality_grades = settings_menu.addAction("Quality Grades")
 
@@ -51,6 +53,7 @@ def build_menu(window: QMainWindow) -> AppMenuActions:
         run_working_tree=run_working_tree,
         run_commit=run_commit,
         toggle_sidebar=toggle_sidebar,
+        code_editor=code_editor,
         ai_model=ai_model,
         quality_grades=quality_grades,
     )
