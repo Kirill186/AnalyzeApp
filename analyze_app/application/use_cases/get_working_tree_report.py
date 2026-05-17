@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from analyze_app.domain.entities import ChangeMetrics, WorkingTreeReport
+from analyze_app.domain.entities import ChangeMetrics, TestRunResult, WorkingTreeReport
 from analyze_app.infrastructure.ai.base import DiffSummaryBackend
-from analyze_app.infrastructure.analysis.pytest_runner import PytestRunner
+from analyze_app.infrastructure.analysis.pytest_runner import PytestRunner, TestProgressCallback
 from analyze_app.infrastructure.analysis.ruff_runner import RuffRunner
 from analyze_app.infrastructure.git.backend import GitBackend
 from analyze_app.infrastructure.storage.sqlite_store import SqliteStore
@@ -25,7 +25,14 @@ class WorkingTreeReportUseCase:
         self.ai_backend = ai_backend
         self.store = store
 
-    def execute(self, repo_id: int, repo_path: Path, use_cache: bool = True) -> WorkingTreeReport:
+    def execute(
+        self,
+        repo_id: int,
+        repo_path: Path,
+        use_cache: bool = True,
+        precomputed_tests: TestRunResult | None = None,
+        on_test_result: TestProgressCallback | None = None,
+    ) -> WorkingTreeReport:
         status = self.git_backend.status_porcelain(repo_path)
         status_key = "\n".join(status)
 
@@ -42,7 +49,11 @@ class WorkingTreeReportUseCase:
             lines_deleted=sum(c.deletions for c in changes),
         )
         issues = self.ruff_runner.run(repo_path)
-        tests = self.pytest_runner.run(repo_path)
+        tests = (
+            precomputed_tests
+            if precomputed_tests is not None
+            else self.pytest_runner.run(repo_path, on_test_result=on_test_result)
+        )
         ai_summary = self.ai_backend.summarize_diff(diff_text)
 
         report = WorkingTreeReport(metrics=metrics, issues=issues, tests=tests, ai_summary=ai_summary)

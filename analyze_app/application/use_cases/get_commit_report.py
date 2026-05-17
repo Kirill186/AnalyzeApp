@@ -5,7 +5,7 @@ from pathlib import Path
 
 from analyze_app.domain.entities import ChangeMetrics, CommitReport, EvidenceBlock, LLMResult, TestRunResult
 from analyze_app.infrastructure.ai.base import DiffSummaryBackend
-from analyze_app.infrastructure.analysis.pytest_runner import PytestRunner
+from analyze_app.infrastructure.analysis.pytest_runner import PytestRunner, TestProgressCallback
 from analyze_app.infrastructure.analysis.ruff_runner import RuffRunner
 from analyze_app.infrastructure.git.backend import GitBackend
 from analyze_app.infrastructure.storage.sqlite_store import SqliteStore
@@ -26,7 +26,14 @@ class CommitReportUseCase:
         self.ai_backend = ai_backend
         self.store = store
 
-    def execute(self, repo_id: int, repo_path: Path, commit_hash: str, use_cache: bool = True) -> CommitReport:
+    def execute(
+        self,
+        repo_id: int,
+        repo_path: Path,
+        commit_hash: str,
+        use_cache: bool = True,
+        on_test_result: TestProgressCallback | None = None,
+    ) -> CommitReport:
         if use_cache:
             cached = self.store.load_commit_report(repo_id, commit_hash)
             if cached and self._is_cache_compatible(cached[9]) and not self._is_unavailable_summary(cached[8]):
@@ -48,7 +55,7 @@ class CommitReportUseCase:
             lines_deleted=sum(c.deletions for c in changes),
         )
         issues = self.ruff_runner.run(repo_path)
-        tests = self.pytest_runner.run(repo_path)
+        tests = self.pytest_runner.run(repo_path, on_test_result=on_test_result)
         ai_summary = self.ai_backend.summarize_diff(diff_text)
         report = CommitReport(
             commit_hash=commit_hash,

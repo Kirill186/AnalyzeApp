@@ -34,13 +34,26 @@ class RadonRunner:
             return []
 
         try:
-            payload: dict[str, list[dict[str, Any]]] = json.loads(stdout)
+            payload: Any = json.loads(stdout)
         except json.JSONDecodeError:
             return [Issue(tool="radon", message="radon cc returned invalid JSON", severity="error")]
+        if not isinstance(payload, dict):
+            return [Issue(tool="radon", message="radon cc returned unexpected JSON", severity="error")]
 
         issues: list[Issue] = []
         for file_name, blocks in payload.items():
+            if isinstance(blocks, dict):
+                error = blocks.get("error")
+                message = f"radon cc could not analyze file: {error}" if error else "radon cc returned unexpected file payload"
+                issues.append(Issue(tool="radon", file=file_name, severity="error", message=message))
+                continue
+            if not isinstance(blocks, list):
+                issues.append(Issue(tool="radon", file=file_name, severity="error", message="radon cc returned unexpected file payload"))
+                continue
             for block in blocks:
+                if not isinstance(block, dict):
+                    issues.append(Issue(tool="radon", file=file_name, severity="error", message="radon cc returned unexpected block payload"))
+                    continue
                 rank = block.get("rank", "?")
                 complexity = block.get("complexity", "?")
                 block_name = block.get("name", "<module>")
@@ -74,9 +87,11 @@ class RadonRunner:
             return []
 
         try:
-            payload: dict[str, Any] = json.loads(stdout)
+            payload: Any = json.loads(stdout)
         except json.JSONDecodeError:
             return [Issue(tool="radon", message="radon mi returned invalid JSON", severity="error")]
+        if not isinstance(payload, dict):
+            return [Issue(tool="radon", message="radon mi returned unexpected JSON", severity="error")]
 
         issues: list[Issue] = []
         for file_name, details in payload.items():

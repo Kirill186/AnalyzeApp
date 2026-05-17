@@ -23,10 +23,21 @@ class RuffRunner:
         if not stdout.strip():
             return []
 
-        payload = json.loads(stdout)
+        try:
+            payload = json.loads(stdout)
+        except json.JSONDecodeError:
+            return [Issue(tool="ruff", message="ruff returned invalid JSON", severity="error")]
+        if not isinstance(payload, list):
+            return [Issue(tool="ruff", message="ruff returned unexpected JSON", severity="error")]
+
         issues: list[Issue] = []
         for item in payload:
+            if not isinstance(item, dict):
+                issues.append(Issue(tool="ruff", message="ruff returned unexpected issue payload", severity="error"))
+                continue
             location = item.get("location") or {}
+            if not isinstance(location, dict):
+                location = {}
             issues.append(
                 Issue(
                     tool="ruff",

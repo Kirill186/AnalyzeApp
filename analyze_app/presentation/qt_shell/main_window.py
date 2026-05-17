@@ -9,6 +9,7 @@ from pathlib import Path
 import shlex
 import shutil
 import subprocess
+from collections.abc import Callable
 
 from PySide6.QtCore import QObject, QThread, Qt, QUrl, Signal, Slot
 from PySide6.QtGui import QDesktopServices
@@ -27,7 +28,15 @@ from analyze_app.application.use_cases.detect_ai_authorship import DetectAIAutho
 from analyze_app.application.use_cases.get_working_tree_report import WorkingTreeReportUseCase
 from analyze_app.application.use_cases.import_repository import ImportRepositoryUseCase
 from analyze_app.application.use_cases.list_commits import ListCommitsUseCase
-from analyze_app.domain.entities import Commit, GraphEdge, GraphNode, LLMResult, ProjectGraph, ProjectOverviewResult
+from analyze_app.domain.entities import (
+    Commit,
+    GraphEdge,
+    GraphNode,
+    LLMResult,
+    ProjectGraph,
+    ProjectOverviewResult,
+    TestRunResult,
+)
 from analyze_app.infrastructure.ai.authorship import FeatureExtractor, ModelRuntime, ProbabilityCalibrator
 from analyze_app.infrastructure.ai.factory import build_diff_ai_backend, build_project_overview_backend
 from analyze_app.infrastructure.analysis.duplication_runner import DuplicationRunner
@@ -114,6 +123,8 @@ class CommitAISummaryResult:
 class RepositoryRefreshWorker(QObject):
     finished = Signal(object)
     failed = Signal(int, str)
+    metric_progress = Signal(int, str, object)
+    test_progress = Signal(int, str, str)
 
     def __init__(
         self,
@@ -144,6 +155,8 @@ class RepositoryRefreshWorker(QObject):
         data_refresh_message = self.git_backend.refresh_remote_data(repo_path)
         tracked_files = self.git_backend.list_tracked_files(repo_path)
         loc = _count_python_loc(self.git_backend, repo_path, tracked_files)
+        commits = ListCommitsUseCase(self.git_backend).execute(repo_path, limit=50)
+        tests_results: list[TestRunResult] = []
 
         metrics = _calculate_quality_metrics(
             repo_id=self.repo.repo_id,
@@ -152,9 +165,12 @@ class RepositoryRefreshWorker(QObject):
             thresholds=self.thresholds,
             git_backend=self.git_backend,
             store=self.store,
+            on_metric_result=self._emit_metric_progress,
+            on_test_result=self._emit_test_progress,
+            on_tests_finished=tests_results.append,
             use_cache=False,
         )
-        commits = ListCommitsUseCase(self.git_backend).execute(repo_path, limit=50)
+        tests = tests_results[0] if tests_results else TestRunResult()
 
         status_lines = self.git_backend.status_porcelain(repo_path)
         file_rows = _parse_status_rows(status_lines)
@@ -166,7 +182,7 @@ class RepositoryRefreshWorker(QObject):
             self.store,
         )
         try:
-            report = use_case.execute(self.repo.repo_id, repo_path, use_cache=False)
+            report = use_case.execute(self.repo.repo_id, repo_path, use_cache=False, precomputed_tests=tests)
         except Exception:  # noqa: BLE001
             report = None
 
@@ -200,6 +216,12 @@ class RepositoryRefreshWorker(QObject):
             workspace_diffs=workspace_diffs,
             working_tree_message=working_tree_message,
         )
+
+    def _emit_test_progress(self, nodeid: str, status: str) -> None:
+        self.test_progress.emit(self.repo.repo_id, nodeid, status)
+
+    def _emit_metric_progress(self, metric_name: str, metric: tuple[str, str, str]) -> None:
+        self.metric_progress.emit(self.repo.repo_id, metric_name, metric)
 
 
 class ProjectMapBuildWorker(QObject):
@@ -688,9 +710,20 @@ class MainWindow(QMainWindow):
 
     def _show_repo_loading(self, repo: RepoListItemVM) -> None:
         self.tabs.overview_tab.set_loading(repo.title)
+        self.tabs.overview_tab.load_readme(Path(repo.working_path))
         self.tabs.commits_tab.set_loading()
+        self._load_commits_for_repo(repo)
         self.tabs.workspace_tab.set_loading()
         self.status.showMessage(f"Analysis started: {repo.title}", 5_000)
+
+    def _load_commits_for_repo(self, repo: RepoListItemVM) -> None:
+        try:
+            commits = ListCommitsUseCase(self.git_backend).execute(Path(repo.working_path), limit=50)
+        except Exception as error:  # noqa: BLE001
+            self.status.showMessage(f"Commit list unavailable: {error}", 5_000)
+            return
+        if self.current_repo and self.current_repo.repo_id == repo.repo_id:
+            self.tabs.commits_tab.set_commits(commits)
 
     def _start_repository_refresh(self, repo: RepoListItemVM) -> bool:
         if self.refresh_thread is not None and self.refresh_thread.isRunning():
@@ -715,6 +748,8 @@ class MainWindow(QMainWindow):
         self.refresh_thread.started.connect(self.refresh_worker.run)
         self.refresh_worker.finished.connect(self._on_refresh_finished)
         self.refresh_worker.failed.connect(self._on_refresh_failed)
+        self.refresh_worker.metric_progress.connect(self._on_refresh_metric_progress)
+        self.refresh_worker.test_progress.connect(self._on_refresh_test_progress)
         self.refresh_worker.finished.connect(self.refresh_thread.quit)
         self.refresh_worker.failed.connect(self.refresh_thread.quit)
         self.refresh_thread.finished.connect(self._cleanup_refresh_worker)
@@ -782,6 +817,20 @@ class MainWindow(QMainWindow):
             self.tabs.commits_tab.clear()
             self.tabs.workspace_tab.clear()
             self.status.showMessage(f"Repository analysis failed: {error}", 8_000)
+
+    @Slot(int, str, object)
+    def _on_refresh_metric_progress(self, repo_id: int, metric_name: str, metric: object) -> None:
+        if not self.current_repo or self.current_repo.repo_id != repo_id:
+            return
+        if not isinstance(metric, (list, tuple)):
+            return
+        self.tabs.overview_tab.update_metric(metric_name, _metric_tuple(metric))
+
+    @Slot(int, str, str)
+    def _on_refresh_test_progress(self, repo_id: int, nodeid: str, status: str) -> None:
+        if not self.current_repo or self.current_repo.repo_id != repo_id:
+            return
+        self.status.showMessage(f"Pytest {status}: {_shorten_test_nodeid(nodeid)}", 8_000)
 
     @Slot()
     def _cleanup_refresh_worker(self) -> None:
@@ -1399,6 +1448,13 @@ def _coerce_int(value: object, default: int = 0) -> int:
         return default
 
 
+def _shorten_test_nodeid(nodeid: str, max_length: int = 140) -> str:
+    value = nodeid.strip()
+    if len(value) <= max_length:
+        return value
+    return f"...{value[-(max_length - 3):]}"
+
+
 def _normalize_repo_group(group: object, fallback: str) -> str:
     value = str(group or "").strip()
     if not value or value == "favorites":
@@ -1488,10 +1544,18 @@ def _calculate_quality_metrics(
     thresholds: dict[str, list[float]],
     git_backend: GitBackend,
     store: SqliteStore,
+    tests: TestRunResult | None = None,
+    on_metric_result: Callable[[str, tuple[str, str, str]], None] | None = None,
+    on_test_result: Callable[[str, str], None] | None = None,
+    on_tests_finished: Callable[[TestRunResult], None] | None = None,
     use_cache: bool = True,
 ) -> dict[str, tuple[str, str, str]]:
     kloc = max(loc / 1000.0, 0.001)
     metrics: dict[str, tuple[str, str, str]] = {}
+
+    def publish(metric_name: str) -> None:
+        if on_metric_result:
+            on_metric_result(metric_name, metrics[metric_name])
 
     ruff_issues = RuffRunner().run(repo_path)
     lint_count = len([issue for issue in ruff_issues if issue.severity in {"warning", "error"}])
@@ -1502,6 +1566,7 @@ def _calculate_quality_metrics(
         f"{lint_count} ({lint_per_kloc:.1f}/KLOC)",
         _fmt_thresholds("<=", lint_thr),
     )
+    publish("lint")
 
     mypy_issues = MypyRunner().run(repo_path)
     mypy_errors = len([issue for issue in mypy_issues if issue.severity == "error"])
@@ -1512,8 +1577,12 @@ def _calculate_quality_metrics(
         f"{mypy_errors} ({mypy_per_kloc:.1f}/KLOC)",
         _fmt_thresholds("<=", mypy_thr),
     )
+    publish("typing_health")
 
-    tests = PytestRunner().run(repo_path)
+    if tests is None:
+        tests = PytestRunner().run(repo_path, on_test_result=on_test_result)
+    if on_tests_finished:
+        on_tests_finished(tests)
     if tests.total > 0:
         failed_rate = (tests.failed / tests.total) * 100.0
         test_thr = thresholds["tests_failed_rate_pct"]
@@ -1524,6 +1593,7 @@ def _calculate_quality_metrics(
         )
     else:
         metrics["tests"] = ("—", "n/a", "нет данных тестов")
+    publish("tests")
 
     radon_issues = RadonRunner().run(repo_path)
     complexity_ranks = _extract_ranks(radon_issues)
@@ -1539,6 +1609,7 @@ def _calculate_quality_metrics(
         )
     else:
         metrics["complexity"] = ("—", "n/a", "нет данных radon")
+    publish("complexity")
 
     maintainability_values = _extract_values(radon_issues, r"Maintainability index is\s+([0-9]+(?:\.[0-9]+)?)")
     if maintainability_values:
@@ -1551,6 +1622,7 @@ def _calculate_quality_metrics(
         )
     else:
         metrics["maintainability"] = ("—", "n/a", "нет данных radon")
+    publish("maintainability")
 
     dead_code_issues = VultureRunner().run(repo_path)
     dead_code_count = len([issue for issue in dead_code_issues if issue.severity in {"warning", "error"}])
@@ -1561,6 +1633,7 @@ def _calculate_quality_metrics(
         f"{dead_code_count} ({dead_code_per_kloc:.1f}/KLOC)",
         _fmt_thresholds("<=", dead_thr),
     )
+    publish("dead_code")
 
     duplication = DuplicationRunner().run(repo_path)
     dup_thr = thresholds["duplication_pct"]
@@ -1569,7 +1642,9 @@ def _calculate_quality_metrics(
         f"{duplication.duplication_pct:.1f}% ({duplication.duplicate_groups} групп)",
         _fmt_thresholds("<=", dup_thr),
     )
+    publish("duplication")
     metrics["ai_signal"] = _calculate_ai_signal_metric(repo_id, repo_path, git_backend, store, use_cache=use_cache)
+    publish("ai_signal")
 
     return metrics
 

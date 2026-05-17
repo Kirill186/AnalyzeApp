@@ -64,8 +64,8 @@ class OverviewTab(QWidget):
             "summaryHtml": "<p class='muted'>Описание пока отсутствует</p>",
             "readmeHtml": "<p class='muted'>README отсутствует</p>",
             "metrics": [
-                {"label": label, "grade": "—", "value": "—", "threshold": "", "loading": False}
-                for _, label in self.METRICS_ORDER
+                {"name": name, "label": label, "grade": "—", "value": "—", "threshold": "", "loading": False}
+                for name, label in self.METRICS_ORDER
             ],
         }
 
@@ -79,8 +79,15 @@ class OverviewTab(QWidget):
         self._state["loc"] = "..."
         self._state["readmeHtml"] = "<p class='muted'>Анализ выполняется...</p>"
         self._state["metrics"] = [
-            {"label": label, "grade": "", "value": "Анализ выполняется", "threshold": "", "loading": True}
-            for _, label in self.METRICS_ORDER
+            {
+                "name": name,
+                "label": label,
+                "grade": "",
+                "value": "Анализ выполняется",
+                "threshold": "",
+                "loading": True,
+            }
+            for name, label in self.METRICS_ORDER
         ]
         self._render()
 
@@ -112,9 +119,21 @@ class OverviewTab(QWidget):
         for metric_name, label in self.METRICS_ORDER:
             grade, value, threshold = metrics.get(metric_name, ("—", "—", ""))
             self._state["metrics"].append(
-                {"label": label, "grade": grade, "value": value, "threshold": threshold, "loading": False}
+                {"name": metric_name, "label": label, "grade": grade, "value": value, "threshold": threshold, "loading": False}
             )
         self._render()
+
+    def update_metric(self, metric_name: str, metric: tuple[str, str, str]) -> None:
+        grade, value, threshold = metric
+        metrics = self._state.get("metrics")
+        if not isinstance(metrics, list):
+            return
+        for item in metrics:
+            if not isinstance(item, dict) or item.get("name") != metric_name:
+                continue
+            item.update({"grade": grade, "value": value, "threshold": threshold, "loading": False})
+            self._render()
+            return
 
     def load_readme(self, repo_path: Path) -> None:
         candidates = _find_readme_candidates(repo_path)
