@@ -58,6 +58,9 @@ from analyze_app.presentation.qt_shell.theme import apply_theme
 from analyze_app.shared.config import AppConfig, DEFAULT_CONFIG
 
 
+COMMIT_HISTORY_LIMIT = 300
+
+
 @dataclass(slots=True)
 class ImportResult:
     repo_id: int
@@ -155,7 +158,7 @@ class RepositoryRefreshWorker(QObject):
         data_refresh_message = self.git_backend.refresh_remote_data(repo_path)
         tracked_files = self.git_backend.list_tracked_files(repo_path)
         loc = _count_python_loc(self.git_backend, repo_path, tracked_files)
-        commits = ListCommitsUseCase(self.git_backend).execute(repo_path, limit=50)
+        commits = ListCommitsUseCase(self.git_backend).execute(repo_path, limit=COMMIT_HISTORY_LIMIT)
         tests_results: list[TestRunResult] = []
 
         metrics = _calculate_quality_metrics(
@@ -371,6 +374,7 @@ class MainWindow(QMainWindow):
 
         self.tabs.commits_tab.commit_selected.connect(self._show_commit_in_status)
         self.tabs.commits_tab.ai_summary_requested.connect(self._describe_commit_with_ai)
+        self.tabs.commits_tab.commit_lookup_requested.connect(self._lookup_commit_from_history)
         self.tabs.workspace_tab.stage_requested.connect(self._stage_workspace_file)
         self.tabs.workspace_tab.open_requested.connect(self._open_repository_file)
         self.tabs.project_map_tab.open_requested.connect(self._open_repository_file)
@@ -718,7 +722,7 @@ class MainWindow(QMainWindow):
 
     def _load_commits_for_repo(self, repo: RepoListItemVM) -> None:
         try:
-            commits = ListCommitsUseCase(self.git_backend).execute(Path(repo.working_path), limit=50)
+            commits = ListCommitsUseCase(self.git_backend).execute(Path(repo.working_path), limit=COMMIT_HISTORY_LIMIT)
         except Exception as error:  # noqa: BLE001
             self.status.showMessage(f"Commit list unavailable: {error}", 5_000)
             return
@@ -1070,8 +1074,29 @@ class MainWindow(QMainWindow):
         if not self.current_repo:
             return
         use_case = ListCommitsUseCase(self.git_backend)
-        commits = use_case.execute(Path(self.current_repo.working_path), limit=50)
+        commits = use_case.execute(Path(self.current_repo.working_path), limit=COMMIT_HISTORY_LIMIT)
         self.tabs.commits_tab.set_commits(commits)
+
+    def _lookup_commit_from_history(self, ref: str) -> None:
+        if not self.current_repo:
+            self.status.showMessage("Select a repository in the left sidebar.", 4_000)
+            return
+        query = ref.strip()
+        if not query:
+            return
+        repo_path = Path(self.current_repo.working_path)
+        try:
+            commit_hash = self.git_backend.resolve_commit(repo_path, query)
+            commits = ListCommitsUseCase(self.git_backend).execute(
+                repo_path,
+                limit=COMMIT_HISTORY_LIMIT,
+                revision=commit_hash,
+            )
+        except Exception as error:  # noqa: BLE001
+            self.status.showMessage(f"Commit not found: {query} ({error})", 6_000)
+            return
+        self.tabs.commits_tab.set_commits(commits, selected_hash=commit_hash)
+        self.status.showMessage(f"Loaded history from commit: {commit_hash[:10]}", 5_000)
 
     def _refresh_map(self) -> None:
         if not self.current_repo:

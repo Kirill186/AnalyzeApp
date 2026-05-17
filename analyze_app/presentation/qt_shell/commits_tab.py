@@ -8,12 +8,13 @@ from PySide6.QtWebEngineWidgets import QWebEngineView
 from PySide6.QtWidgets import QVBoxLayout, QWidget
 
 from analyze_app.domain.entities import Commit
-from analyze_app.presentation.qt_shell.web_view_utils import escape_plain, render_html_template
+from analyze_app.presentation.qt_shell.web_view_utils import render_html_template
 
 
 class CommitsWebPage(QWebEnginePage):
     commit_selected = Signal(str)
     ai_requested = Signal(str)
+    lookup_requested = Signal(str)
 
     def acceptNavigationRequest(self, url: QUrl, nav_type, is_main_frame: bool) -> bool:  # type: ignore[override]
         if url.scheme() == "analyzeapp":
@@ -23,6 +24,8 @@ class CommitsWebPage(QWebEnginePage):
                 self.commit_selected.emit(commit_hash)
             elif action == "ai" and commit_hash:
                 self.ai_requested.emit(commit_hash)
+            elif action == "lookup" and commit_hash:
+                self.lookup_requested.emit(commit_hash)
             return False
         return super().acceptNavigationRequest(url, nav_type, is_main_frame)
 
@@ -30,6 +33,7 @@ class CommitsWebPage(QWebEnginePage):
 class CommitsTab(QWidget):
     commit_selected = Signal(str)
     ai_summary_requested = Signal(str)
+    commit_lookup_requested = Signal(str)
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -37,13 +41,13 @@ class CommitsTab(QWidget):
         self._commits: list[Commit] = []
         self._summary_text = ""
         self._summary_loading_hash: str | None = None
-        self._show_details = False
         self._loading = False
 
         self.web = QWebEngineView()
         self.page = CommitsWebPage(self.web)
         self.page.commit_selected.connect(self._set_selected_hash)
         self.page.ai_requested.connect(self._on_ai_requested_from_web)
+        self.page.lookup_requested.connect(self.commit_lookup_requested)
         self.web.setPage(self.page)
 
         root = QVBoxLayout(self)
@@ -51,12 +55,12 @@ class CommitsTab(QWidget):
         root.addWidget(self.web)
         self._render()
 
-    def set_commits(self, commits: list[Commit]) -> None:
+    def set_commits(self, commits: list[Commit], selected_hash: str | None = None) -> None:
         self._loading = False
         self._commits = commits
-        self._selected_hash = commits[0].hash if commits else None
+        hashes = {commit.hash for commit in commits}
+        self._selected_hash = selected_hash if selected_hash in hashes else (commits[0].hash if commits else None)
         self._summary_loading_hash = None
-        self._show_details = False
         if self._selected_hash:
             self.commit_selected.emit(self._selected_hash)
         self._render()
@@ -67,7 +71,6 @@ class CommitsTab(QWidget):
         self._commits = []
         self._summary_text = ""
         self._summary_loading_hash = None
-        self._show_details = False
         self._render()
 
     def clear(self) -> None:
@@ -76,25 +79,21 @@ class CommitsTab(QWidget):
         self._commits = []
         self._summary_text = ""
         self._summary_loading_hash = None
-        self._show_details = False
         self._render()
 
     def set_commit_summary_loading(self, commit_hash: str) -> None:
         self._selected_hash = commit_hash
         self._summary_loading_hash = commit_hash
         self._summary_text = ""
-        self._show_details = True
         self._render()
 
     def set_commit_summary(self, commit_hash: str, summary: str, model_info: str) -> None:
         self._summary_loading_hash = None
         self._summary_text = f"{commit_hash[:10]}\nМодель: {model_info}\n\n{summary}"
-        self._show_details = self._selected_hash == commit_hash
         self._render()
 
     def _set_selected_hash(self, commit_hash: str) -> None:
         self._selected_hash = commit_hash
-        self._show_details = True
         self.commit_selected.emit(commit_hash)
 
     def _on_ai_requested_from_web(self, commit_hash: str) -> None:
@@ -111,15 +110,15 @@ class CommitsTab(QWidget):
                     "author": commit.author,
                     "date": commit.authored_at.astimezone().strftime("%Y-%m-%d %H:%M"),
                     "message": commit.message.replace("\n", " ").strip() or "(без сообщения)",
+                    "parents": list(commit.parents),
+                    "isMerge": len(commit.parents) > 1,
                     "description": self._summary_text if self._selected_hash == commit.hash and self._summary_text else "",
                     "descriptionLoading": self._summary_loading_hash == commit.hash,
                 }
             )
         payload = {
             "commits": serialized,
-            "summary": escape_plain(self._summary_text),
             "selectedHash": self._selected_hash,
-            "showDetails": self._show_details,
             "loading": self._loading,
         }
         template_path = Path(__file__).with_name("web_assets") / "commits.html"

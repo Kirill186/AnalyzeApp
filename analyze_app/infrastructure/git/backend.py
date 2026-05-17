@@ -21,9 +21,12 @@ class GitBackend:
             return destination
         return Path(source).resolve()
 
-    def list_commits(self, repo_path: Path, limit: int = 20) -> list[Commit]:
+    def list_commits(self, repo_path: Path, limit: int = 20, revision: str = "HEAD") -> list[Commit]:
         fmt = "%H|%P|%an|%aI|%s"
-        output = self._git(["log", f"--max-count={limit}", f"--pretty=format:{fmt}"], repo_path)
+        output = self._git(
+            ["log", "--date-order", f"--max-count={limit}", f"--pretty=format:{fmt}", revision],
+            repo_path,
+        )
         commits: list[Commit] = []
         for row in output.splitlines():
             commit_hash, parents_raw, author, authored_at, message = row.split("|", 4)
@@ -38,6 +41,14 @@ class GitBackend:
                 )
             )
         return commits
+
+    def resolve_commit(self, repo_path: Path, ref: str) -> str:
+        cleaned = ref.strip()
+        if not cleaned:
+            raise ValueError("commit ref is empty")
+        if any(char.isspace() for char in cleaned):
+            raise ValueError("commit ref must not contain whitespace")
+        return self._git(["rev-parse", "--verify", f"{cleaned}^{{commit}}"], repo_path)
 
     def last_commit_at(self, repo_path: Path) -> datetime | None:
         try:

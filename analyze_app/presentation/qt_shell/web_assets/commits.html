@@ -4,175 +4,693 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
 <style>
-:root{color-scheme:dark;--stroke:#294574;--text:#eff4ff;--muted:#9fb4d6;--accent:#74a8ff}
+:root{
+  color-scheme:dark;
+  --bg:#0d1016;
+  --panel:#151922;
+  --panel-2:#10141b;
+  --panel-3:#1b202b;
+  --stroke:#303846;
+  --stroke-soft:#252c37;
+  --text:#f1f4f8;
+  --muted:#a8b1bf;
+  --muted-2:#788391;
+  --accent:#58d0b6;
+  --accent-2:#e6b85c;
+  --danger:#ed7d74;
+  --shadow:rgba(0,0,0,.26);
+}
 html,body{height:100%;margin:0}
 *{box-sizing:border-box}
-body{font-family:Inter,Segoe UI,sans-serif;color:var(--text);background:radial-gradient(1000px 800px at 15% 5%, #163163, #090f1e 45%, #050912);padding:10px}
-.layout{display:grid;grid-template-columns:minmax(0,1fr) 360px;gap:10px;height:100%;min-height:0}
-.panel{min-height:0;border:1px solid var(--stroke);border-radius:14px;background:linear-gradient(170deg, rgba(19,31,58,.85), rgba(9,14,28,.84));padding:10px}
-.title{margin:0 0 8px;font-size:13px;font-weight:700;color:#cfe0ff}
-.graph-shell{height:100%;display:flex;flex-direction:column;min-height:0}
-.graph-scroll{flex:1;min-height:0;overflow:auto;border:1px solid #223a64;border-radius:12px;background:linear-gradient(180deg, rgba(7,12,22,.95), rgba(7,15,30,.8));padding:8px}
-#graph{display:block;width:100%;min-width:680px}
-.side{min-height:0;display:flex;flex-direction:column}
-.pane{min-height:0;display:none;flex:1;flex-direction:column}
-.pane.visible{display:flex}
-.ribbon{overflow:auto;display:flex;flex-direction:column;gap:8px;padding-right:4px;flex:1;min-height:0}
-.r-item{border:1px solid #2d4772;border-radius:12px;padding:10px;cursor:pointer;background:rgba(255,255,255,.02)}
-.r-item:hover{border-color:#5f87ca}.r-item.active{border-color:var(--accent);box-shadow:0 0 0 1px rgba(116,168,255,.45) inset}
-.hash{font-size:12px;font-weight:700;color:#a9c8ff}.meta{margin-top:2px;font-size:11px;color:var(--muted)}.msg{margin-top:6px;font-size:12px;line-height:1.35}
-.details{overflow:auto;flex:1;min-height:0}
-.badge{display:inline-block;padding:4px 9px;border-radius:999px;background:#1a2d50;border:1px solid #3d609e;font-size:11px;color:#b8d0ff}
-.desc{margin-top:10px;white-space:pre-wrap;line-height:1.45;color:#dce7ff}
-.action{margin-top:14px;padding:10px;border-radius:12px;border:1px solid #3b5f9f;background:rgba(52,92,168,.14);font-size:13px}
-.action button{margin-top:8px;padding:8px 12px;border-radius:10px;border:1px solid #6990d5;background:#1a3057;color:#ddebff;cursor:pointer}
-.action button:disabled{opacity:.65;cursor:default}
-.empty{color:var(--muted)}.commit-card{cursor:pointer}
-.loader{display:inline-block;width:18px;height:18px;border:3px solid rgba(239,244,255,.22);border-top-color:var(--accent);border-radius:50%;animation:spin .8s linear infinite;vertical-align:middle;margin-right:8px}
+body{
+  font-family:Inter,Segoe UI,Arial,sans-serif;
+  font-size:13px;
+  letter-spacing:0;
+  color:var(--text);
+  background:var(--bg);
+  padding:12px;
+}
+button,input{font:inherit}
+button{
+  height:32px;
+  border:1px solid var(--stroke);
+  border-radius:8px;
+  color:var(--text);
+  background:var(--panel-3);
+  cursor:pointer;
+}
+button:hover{border-color:#536071;background:#222936}
+button:disabled{opacity:.6;cursor:default}
+.page{height:100%;display:grid;grid-template-rows:auto minmax(0,1fr);gap:10px;min-height:0}
+.toolbar{
+  display:grid;
+  grid-template-columns:minmax(260px,1fr) minmax(320px,520px) auto;
+  gap:10px;
+  align-items:center;
+  min-height:54px;
+  border:1px solid var(--stroke);
+  border-radius:8px;
+  background:var(--panel);
+  padding:10px;
+  box-shadow:0 10px 28px var(--shadow);
+}
+.title{font-size:15px;font-weight:800;line-height:1.1}
+.subtitle{margin-top:4px;color:var(--muted);font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.search{display:grid;grid-template-columns:minmax(0,1fr) 32px 32px 70px;gap:6px;align-items:center}
+.search input{
+  width:100%;
+  height:32px;
+  border:1px solid var(--stroke);
+  border-radius:8px;
+  background:#0f131a;
+  color:var(--text);
+  padding:0 10px;
+  outline:none;
+}
+.search input:focus{border-color:var(--accent);box-shadow:0 0 0 2px rgba(88,208,182,.16)}
+.toolbar-actions{display:flex;gap:6px;justify-content:flex-end;align-items:center}
+.toolbar-actions button,.search button{padding:0 10px;min-width:32px}
+.mode.active{border-color:var(--accent);color:#dffbf5;background:rgba(88,208,182,.14)}
+.content{min-height:0;display:grid;grid-template-columns:minmax(0,1fr) 390px;gap:10px}
+.graph-panel,.details-panel,.list-panel{
+  min-height:0;
+  border:1px solid var(--stroke);
+  border-radius:8px;
+  background:var(--panel);
+  overflow:hidden;
+}
+.graph-panel{display:grid;grid-template-rows:auto minmax(0,1fr)}
+.panel-head{
+  min-height:44px;
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:8px;
+  padding:9px 10px;
+  border-bottom:1px solid var(--stroke-soft);
+}
+.panel-title{font-size:12px;font-weight:800;text-transform:uppercase;color:#dce3ed}
+.panel-meta{font-size:12px;color:var(--muted);white-space:nowrap}
+.graph-scroll{
+  min-height:0;
+  overflow:auto;
+  background:
+    linear-gradient(90deg, rgba(255,255,255,.025) 1px, transparent 1px) 0 0/42px 42px,
+    linear-gradient(0deg, rgba(255,255,255,.018) 1px, transparent 1px) 0 0/42px 42px,
+    var(--panel-2);
+}
+#graph{display:block;min-width:920px;width:100%}
+.side{min-height:0;display:grid;grid-template-rows:minmax(230px,auto) minmax(0,1fr);gap:10px}
+.details-panel{display:grid;grid-template-rows:auto minmax(0,1fr)}
+.details{min-height:0;overflow:auto;padding:10px}
+.list-panel{display:grid;grid-template-rows:auto minmax(0,1fr)}
+.list{min-height:0;overflow:auto;padding:8px;display:flex;flex-direction:column;gap:7px}
+.commit-row{
+  border:1px solid var(--stroke-soft);
+  border-radius:8px;
+  background:#11161f;
+  padding:8px;
+  cursor:pointer;
+}
+.commit-row:hover{border-color:#566274;background:#171d27}
+.commit-row.active{border-color:var(--accent);box-shadow:0 0 0 1px rgba(88,208,182,.24) inset}
+.commit-row.match:not(.active){border-color:rgba(230,184,92,.55)}
+.row-top{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.hash{font-family:Consolas,Menlo,monospace;font-size:12px;font-weight:800;color:#cbf6ee}
+.date{font-size:11px;color:var(--muted-2);white-space:nowrap}
+.msg{margin-top:5px;color:#edf1f7;line-height:1.32;overflow-wrap:anywhere}
+.meta{margin-top:4px;color:var(--muted);font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.chips{display:flex;flex-wrap:wrap;gap:5px;margin-top:8px}
+.chip{
+  display:inline-flex;
+  align-items:center;
+  min-height:22px;
+  border:1px solid var(--stroke);
+  border-radius:999px;
+  padding:2px 8px;
+  color:#d7dde7;
+  background:#181e28;
+  font-size:11px;
+}
+.chip.merge{border-color:rgba(230,184,92,.55);color:#ffe2a6;background:rgba(230,184,92,.1)}
+.chip.branch{border-color:rgba(88,208,182,.55);color:#caf8ef;background:rgba(88,208,182,.1)}
+.full-hash{font-family:Consolas,Menlo,monospace;color:#d7dde7;overflow-wrap:anywhere}
+.details h2{font-size:16px;line-height:1.25;margin:8px 0 6px;overflow-wrap:anywhere}
+.detail-grid{display:grid;grid-template-columns:70px minmax(0,1fr);gap:7px 10px;margin-top:10px;color:var(--muted)}
+.detail-grid strong{color:#dce3ed;font-weight:700}
+.desc{
+  margin-top:12px;
+  border-top:1px solid var(--stroke-soft);
+  padding-top:10px;
+  color:#dfe6ef;
+  line-height:1.46;
+  white-space:pre-wrap;
+}
+.action-bar{display:flex;gap:7px;margin-top:12px;align-items:center}
+.action-bar button{padding:0 12px;border-color:rgba(88,208,182,.6);background:rgba(88,208,182,.12)}
+.state{color:var(--muted);padding:10px}
+.state.tight{padding:0;color:var(--muted)}
+.loader{
+  display:inline-block;
+  width:16px;
+  height:16px;
+  border:2px solid rgba(241,244,248,.22);
+  border-top-color:var(--accent);
+  border-radius:50%;
+  animation:spin .8s linear infinite;
+  vertical-align:-3px;
+  margin-right:7px;
+}
+.svg-text{font-family:Inter,Segoe UI,Arial,sans-serif;letter-spacing:0}
+.svg-mono{font-family:Consolas,Menlo,monospace;letter-spacing:0}
+.commit-node,.cluster-node{cursor:pointer}
 @keyframes spin{to{transform:rotate(360deg)}}
-@media (max-width:860px){.layout{grid-template-columns:1fr;grid-template-rows:1fr 420px}}
+@media (max-width:980px){
+  body{padding:8px}
+  .toolbar{grid-template-columns:1fr;gap:8px}
+  .toolbar-actions{justify-content:flex-start}
+  .content{grid-template-columns:1fr;grid-template-rows:minmax(360px,1fr) 520px}
+  .side{grid-template-rows:auto minmax(0,1fr)}
+}
 </style>
 </head>
 <body>
-<div class="layout">
-  <section class="panel graph-shell">
-    <h3 class="title">Tree / Graph коммитов</h3>
-    <div id="graphScroll" class="graph-scroll"><svg id="graph"></svg></div>
-  </section>
-  <section id="sidePanel" class="panel side">
-    <div id="ribbonPane" class="pane">
-      <h3 class="title">Вертикальная лента коммитов</h3>
-      <div id="ribbon" class="ribbon"></div>
+<div class="page">
+  <header class="toolbar">
+    <div>
+      <div class="title">История коммитов</div>
+      <div id="subtitle" class="subtitle"></div>
     </div>
-    <div id="detailsPane" class="pane">
-      <h3 class="title">Информация о коммите</h3>
-      <div id="details" class="details"></div>
+    <div class="search">
+      <input id="searchBox" autocomplete="off" spellcheck="false" placeholder="hash, автор или сообщение" />
+      <button id="prevMatch" title="Предыдущее совпадение">↑</button>
+      <button id="nextMatch" title="Следующее совпадение">↓</button>
+      <button id="jumpSearch">Найти</button>
     </div>
-  </section>
+    <div class="toolbar-actions">
+      <button id="headButton">HEAD</button>
+      <button id="modeButton" class="mode">Focus</button>
+    </div>
+  </header>
+  <main class="content">
+    <section class="graph-panel">
+      <div class="panel-head">
+        <div>
+          <div class="panel-title">Commit graph</div>
+          <div id="graphMeta" class="panel-meta"></div>
+        </div>
+        <div id="searchState" class="panel-meta"></div>
+      </div>
+      <div id="graphScroll" class="graph-scroll"><svg id="graph"></svg></div>
+    </section>
+    <aside class="side">
+      <section class="details-panel">
+        <div class="panel-head">
+          <div class="panel-title">Выбранный коммит</div>
+          <div id="detailMeta" class="panel-meta"></div>
+        </div>
+        <div id="details" class="details"></div>
+      </section>
+      <section class="list-panel">
+        <div class="panel-head">
+          <div class="panel-title">Навигация</div>
+          <div id="listMeta" class="panel-meta"></div>
+        </div>
+        <div id="commitList" class="list"></div>
+      </section>
+    </aside>
+  </main>
 </div>
 <script>
 const data = __DATA_JSON__;
-const commits = data.commits || [];
+const commits = (data.commits || []).map((commit, index) => ({
+  ...commit,
+  index,
+  parents: commit.parents || [],
+}));
 const loading = Boolean(data.loading);
+const COMPACT_THRESHOLD = 90;
+const FOCUS_RADIUS = 20;
+const HEAD_KEEP = 18;
+const MAX_LANES = 7;
+
 let selected = data.selectedHash || (commits.length ? commits[0].hash : null);
-let showDetails = Boolean(data.showDetails);
+let condensed = commits.length > COMPACT_THRESHOLD;
+let query = '';
+let matches = [];
+let matchCursor = 0;
 
-const esc = (t='') => t.replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;');
-const clip = (t='', l=88) => t.length > l ? t.slice(0,l) + '…' : t;
+const indexByHash = new Map(commits.map((commit, index) => [commit.hash, index]));
+const childrenByParent = new Map();
+for (const commit of commits) {
+  for (const parent of commit.parents) {
+    const children = childrenByParent.get(parent) || [];
+    children.push(commit.hash);
+    childrenByParent.set(parent, children);
+  }
+}
 
-function pick(hash){
+const esc = (value = '') => String(value ?? '')
+  .replaceAll('&', '&amp;')
+  .replaceAll('<', '&lt;')
+  .replaceAll('>', '&gt;')
+  .replaceAll('"', '&quot;');
+const clip = (value = '', limit = 90) => {
+  const text = String(value ?? '');
+  return text.length > limit ? `${text.slice(0, Math.max(0, limit - 3))}...` : text;
+};
+const short = (hash = '') => hash.slice(0, 10);
+const childCount = (hash) => (childrenByParent.get(hash) || []).length;
+
+function lookupRef(ref) {
+  const clean = String(ref || '').trim();
+  if (!clean) return;
+  window.location.href = `analyzeapp://lookup/${encodeURIComponent(clean)}`;
+}
+
+function askAi(hash) {
+  window.location.href = `analyzeapp://ai/${hash}`;
+}
+
+function selectCommit(hash, notify = true) {
+  if (!indexByHash.has(hash)) return;
   selected = hash;
-  showDetails = true;
-  paintRibbon();
-  paintDetails();
-  paintGraph();
-  paintSide();
-  window.location.href = `analyzeapp://select/${hash}`;
+  syncMatchCursor();
+  paint();
+  if (notify) {
+    window.location.href = `analyzeapp://select/${hash}`;
+  }
 }
 
-function askAi(hash){ window.location.href = `analyzeapp://ai/${hash}`; }
+function selectByIndex(index) {
+  const clamped = Math.max(0, Math.min(commits.length - 1, index));
+  if (commits[clamped]) selectCommit(commits[clamped].hash);
+}
 
-function paintRibbon(){
-  const el = document.getElementById('ribbon');
-  const top = el.scrollTop;
-  if(loading){
-    el.innerHTML = '<div class="empty"><span class="loader"></span>Loading commits...</div>';
+function selectedIndex() {
+  return indexByHash.has(selected) ? indexByHash.get(selected) : 0;
+}
+
+function rebuildMatches() {
+  const needle = query.trim().toLowerCase();
+  if (!needle) {
+    matches = [];
+    matchCursor = 0;
     return;
   }
-  el.innerHTML = commits.map((c) => `
-    <div class="r-item ${c.hash===selected?'active':''}" onclick="pick('${c.hash}')">
-      <div class="hash">${esc(c.shortHash)}</div>
-      <div class="meta">${esc(c.author)} • ${esc(c.date)}</div>
-      <div class="msg">${esc(clip(c.message || '(без сообщения)'))}</div>
-    </div>`).join('') || '<div class="empty">Нет коммитов</div>';
-  el.scrollTop = top;
+  matches = commits.filter((commit) => {
+    const haystack = `${commit.hash} ${commit.shortHash} ${commit.author} ${commit.date} ${commit.message}`.toLowerCase();
+    return haystack.includes(needle);
+  });
+  if (matchCursor >= matches.length) matchCursor = 0;
 }
 
-function paintDetails(){
+function syncMatchCursor() {
+  if (!matches.length) return;
+  const nextCursor = matches.findIndex((commit) => commit.hash === selected);
+  if (nextCursor >= 0) matchCursor = nextCursor;
+}
+
+function jumpSearch() {
+  rebuildMatches();
+  if (matches.length) {
+    selectCommit(matches[matchCursor].hash);
+    return;
+  }
+  lookupRef(query);
+}
+
+function moveMatch(delta) {
+  rebuildMatches();
+  if (!matches.length) {
+    lookupRef(query);
+    return;
+  }
+  matchCursor = (matchCursor + delta + matches.length) % matches.length;
+  selectCommit(matches[matchCursor].hash);
+}
+
+function visibleIndexes() {
+  if (!commits.length) return [];
+  if (!condensed || commits.length <= COMPACT_THRESHOLD) {
+    return commits.map((_, index) => index);
+  }
+
+  const keep = new Set();
+  const focus = selectedIndex();
+  for (let index = 0; index < Math.min(HEAD_KEEP, commits.length); index += 1) keep.add(index);
+  for (let index = focus - FOCUS_RADIUS; index <= focus + FOCUS_RADIUS; index += 1) {
+    if (index >= 0 && index < commits.length) keep.add(index);
+  }
+  for (const match of matches.slice(0, 50)) keep.add(match.index);
+  commits.forEach((commit, index) => {
+    if (commit.parents.length > 1 || childCount(commit.hash) > 1) keep.add(index);
+  });
+  keep.add(commits.length - 1);
+  return Array.from(keep).sort((a, b) => a - b);
+}
+
+function buildRows() {
+  const rows = [];
+  const indexes = visibleIndexes();
+  let cursor = 0;
+
+  function addHidden(start, end) {
+    if (end < start) return;
+    const count = end - start + 1;
+    if (count <= 2) {
+      for (let index = start; index <= end; index += 1) {
+        rows.push({ type: 'commit', index, commit: commits[index] });
+      }
+      return;
+    }
+    rows.push({
+      type: 'cluster',
+      start,
+      end,
+      count,
+      midpoint: Math.floor((start + end) / 2),
+    });
+  }
+
+  for (const index of indexes) {
+    addHidden(cursor, index - 1);
+    rows.push({ type: 'commit', index, commit: commits[index] });
+    cursor = index + 1;
+  }
+  addHidden(cursor, commits.length - 1);
+  return rows;
+}
+
+function laneModel() {
+  if (!commits.length) return { laneByHash: new Map(), laneCount: 1 };
+  const laneByHash = new Map();
+  let nextBranchLane = 1;
+  const claimBranchLane = () => {
+    const lane = nextBranchLane;
+    nextBranchLane = nextBranchLane >= MAX_LANES - 1 ? 1 : nextBranchLane + 1;
+    return lane;
+  };
+
+  commits.forEach((commit, index) => {
+    if (!laneByHash.has(commit.hash)) {
+      laneByHash.set(commit.hash, index === 0 ? 0 : claimBranchLane());
+    }
+    const lane = laneByHash.get(commit.hash);
+    commit.parents.forEach((parent, parentIndex) => {
+      if (!indexByHash.has(parent) || laneByHash.has(parent)) return;
+      laneByHash.set(parent, parentIndex === 0 ? lane : claimBranchLane());
+    });
+  });
+
+  const lanes = Array.from(laneByHash.values());
+  return { laneByHash, laneCount: Math.min(MAX_LANES, Math.max(1, Math.max(...lanes) + 1)) };
+}
+
+function clusterLabel(row) {
+  const newer = commits[row.start];
+  const older = commits[row.end];
+  const from = older ? older.date.slice(0, 10) : '';
+  const to = newer ? newer.date.slice(0, 10) : '';
+  const dates = from && to && from !== to ? `${from} - ${to}` : (from || to);
+  return `${row.count} коммитов · ${dates}`;
+}
+
+function clusterForIndex(rows, index) {
+  return rows.findIndex((row) => row.type === 'cluster' && index >= row.start && index <= row.end);
+}
+
+function paintToolbar() {
+  const rows = buildRows();
+  const visibleCommits = rows.filter((row) => row.type === 'commit').length;
+  const hidden = rows.filter((row) => row.type === 'cluster').reduce((sum, row) => sum + row.count, 0);
+  const selectedCommit = commits[selectedIndex()];
+
+  document.getElementById('subtitle').textContent = loading
+    ? 'Загрузка истории...'
+    : `Загружено ${commits.length} · на графе ${visibleCommits} · свернуто ${hidden}`;
+  document.getElementById('graphMeta').textContent = condensed && commits.length > COMPACT_THRESHOLD
+    ? 'focus-граф с кластерами'
+    : 'полный вид загруженной истории';
+  document.getElementById('detailMeta').textContent = selectedCommit ? short(selectedCommit.hash) : '';
+  document.getElementById('listMeta').textContent = query.trim() ? `${matches.length} совп.` : `${commits.length} всего`;
+
+  const modeButton = document.getElementById('modeButton');
+  modeButton.textContent = condensed ? 'Focus' : 'All';
+  modeButton.classList.toggle('active', condensed);
+  modeButton.disabled = commits.length <= COMPACT_THRESHOLD;
+
+  const searchState = document.getElementById('searchState');
+  if (!query.trim()) {
+    searchState.textContent = '';
+  } else if (matches.length) {
+    searchState.textContent = `${matchCursor + 1}/${matches.length}`;
+  } else {
+    searchState.innerHTML = `Нет в выборке <button onclick="lookupRef(query)">Искать в Git</button>`;
+  }
+}
+
+function commitFlags(commit) {
+  const flags = [];
+  if (commit.parents.length > 1) flags.push('<span class="chip merge">merge</span>');
+  if (childCount(commit.hash) > 1) flags.push('<span class="chip branch">branch</span>');
+  return flags.join('');
+}
+
+function paintDetails() {
   const el = document.getElementById('details');
-  if(loading){
-    el.innerHTML = '<div class="empty"><span class="loader"></span>Loading repository data...</div>';
+  if (loading) {
+    el.innerHTML = '<div class="state"><span class="loader"></span>Загрузка истории...</div>';
     return;
   }
-  const commit = commits.find(c => c.hash === selected);
-  if(!commit){ el.innerHTML = '<div class="empty">Выберите коммит на графе или в ленте.</div>'; return; }
-  const descriptionLoading = Boolean(commit.descriptionLoading);
-  const description = descriptionLoading
-    ? '<span class="loader"></span>Генерация описания коммита...'
-    : esc(commit.description || 'Описание пока не сгенерировано.');
-  const buttonLabel = descriptionLoading ? 'Генерация...' : 'Сделать AI-обзор';
+  if (!commits.length) {
+    el.innerHTML = '<div class="state">В репозитории нет коммитов.</div>';
+    return;
+  }
+  const commit = commits[selectedIndex()];
+  if (!commit) {
+    el.innerHTML = '<div class="state">Выберите коммит.</div>';
+    return;
+  }
+  const parents = commit.parents.length
+    ? commit.parents.map((parent) => `<span class="chip">${esc(short(parent))}</span>`).join('')
+    : '<span class="chip">root</span>';
+  const description = commit.descriptionLoading
+    ? '<span class="loader"></span>Генерация описания...'
+    : esc(commit.description || 'Описание пока не создано.');
+  const buttonLabel = commit.descriptionLoading ? 'Генерация...' : 'AI обзор';
+
   el.innerHTML = `
-    <div class="badge">${esc(commit.shortHash)}</div>
-    <h3 style="margin:10px 0 4px">${esc(commit.message || '(без сообщения)')}</h3>
-    <div class="meta">${esc(commit.author)} • ${esc(commit.date)}</div>
+    <div class="full-hash">${esc(commit.hash)}</div>
+    <h2>${esc(commit.message || '(без сообщения)')}</h2>
+    <div class="chips">${commitFlags(commit)}${parents}</div>
+    <div class="detail-grid">
+      <strong>Автор</strong><div>${esc(commit.author)}</div>
+      <strong>Дата</strong><div>${esc(commit.date)}</div>
+      <strong>Родители</strong><div>${commit.parents.length || 0}</div>
+      <strong>Потомки</strong><div>${childCount(commit.hash)}</div>
+    </div>
     <div class="desc">${description}</div>
-    <div class="action">Предложение: сделать AI-обзор этого коммита в AnalyzeApp.
-      <br/><button ${descriptionLoading ? 'disabled' : ''} onclick="askAi('${commit.hash}')">${buttonLabel}</button>
+    <div class="action-bar">
+      <button ${commit.descriptionLoading ? 'disabled' : ''} onclick="askAi('${commit.hash}')">${buttonLabel}</button>
     </div>`;
 }
 
-function paintGraph(){
-  const wrap = document.getElementById('graphScroll');
-  const oldTop = wrap.scrollTop;
-  const oldLeft = wrap.scrollLeft;
-  const svg = document.getElementById('graph');
-  const w = Math.max(760, wrap.clientWidth - 16);
-  const count = Math.max(commits.length, 1);
-  const h = Math.max(wrap.clientHeight - 16, 90 + count * 82);
-  svg.setAttribute('viewBox', `0 0 ${w} ${h}`);
-  svg.setAttribute('height', h);
-
-  const laneCount = Math.min(4, Math.max(2, Math.ceil(Math.sqrt(count/2))));
-  const laneX = i => 120 + i * ((w-240)/Math.max(1, laneCount-1));
-  const stepY = Math.max(72, (h-90) / count);
-
-  let branch = 0;
-  const nodes = commits.map((c, i) => {
-    if(i > 0 && i % 5 === 0) branch = (branch + 1) % laneCount;
-    return { ...c, x: laneX(branch), y: 45 + i * stepY };
-  });
-
-  const lines = nodes.slice(0,-1).map((a, i) => {
-    const b = nodes[i+1];
-    const color = i%2===0 ? '#79afff' : '#67ffd3';
-    return `<path d="M ${a.x} ${a.y+18} C ${a.x} ${(a.y+b.y)/2}, ${b.x} ${(a.y+b.y)/2}, ${b.x} ${b.y-18}" stroke="${color}" stroke-width="2" fill="none" opacity="0.8"/>`;
-  }).join('');
-
-  const cards = nodes.map((n) => {
-    const active = n.hash === selected;
-    const x = n.x - 94, y = n.y - 22;
-    return `<g class="commit-card" onclick="pick('${n.hash}')">
-      <rect x="${x}" y="${y}" rx="12" ry="12" width="188" height="44" fill="${active ? 'rgba(90,146,235,.25)' : 'rgba(12,24,48,.85)'}" stroke="${active ? '#7cb2ff' : '#36578d'}"/>
-      <circle cx="${x+16}" cy="${y+22}" r="5" fill="${active ? '#74ffd2' : '#a9c8ff'}"/>
-      <text x="${x+30}" y="${y+19}" font-size="11" fill="#dce8ff" font-weight="700">${esc(n.shortHash)}</text>
-      <text x="${x+30}" y="${y+33}" font-size="10" fill="#9fb8dd">${esc(clip(n.message, 24))}</text>
-    </g>`;
-  }).join('');
-
-  svg.innerHTML = `${lines}${cards}`;
-  wrap.scrollTop = oldTop;
-  wrap.scrollLeft = oldLeft;
-}
-
-function paintSide(){
-  document.getElementById('ribbonPane').classList.toggle('visible', !showDetails);
-  document.getElementById('detailsPane').classList.toggle('visible', showDetails);
-}
-
-function onGraphBackgroundClick(e){
-  if(e.target.closest('.commit-card')){
+function paintList() {
+  const el = document.getElementById('commitList');
+  if (loading) {
+    el.innerHTML = '<div class="state"><span class="loader"></span>Загрузка...</div>';
     return;
   }
-  showDetails = false;
-  paintSide();
+  const source = query.trim() ? matches : commits;
+  if (!source.length) {
+    el.innerHTML = query.trim()
+      ? '<div class="state">Совпадений нет. Можно найти полный hash через Git.</div>'
+      : '<div class="state">Коммитов нет.</div>';
+    return;
+  }
+  el.innerHTML = source.map((commit) => {
+    const active = commit.hash === selected;
+    const isMatch = query.trim() && matches.some((match) => match.hash === commit.hash);
+    return `
+      <div class="commit-row ${active ? 'active' : ''} ${isMatch ? 'match' : ''}" data-hash="${commit.hash}" onclick="selectCommit('${commit.hash}')">
+        <div class="row-top">
+          <div class="hash">${esc(commit.shortHash)}</div>
+          <div class="date">${esc(commit.date.slice(0, 10))}</div>
+        </div>
+        <div class="msg">${esc(clip(commit.message || '(без сообщения)', 82))}</div>
+        <div class="meta">${esc(commit.author)}</div>
+      </div>`;
+  }).join('');
 }
 
-paintRibbon();
-paintDetails();
-paintGraph();
-paintSide();
-document.getElementById('graphScroll').addEventListener('click', onGraphBackgroundClick);
-addEventListener('resize', paintGraph, {passive:true});
+function paintGraph() {
+  const wrap = document.getElementById('graphScroll');
+  const svg = document.getElementById('graph');
+  if (loading) {
+    svg.setAttribute('viewBox', '0 0 920 260');
+    svg.setAttribute('height', 260);
+    svg.innerHTML = '<text x="28" y="54" fill="#a8b1bf" font-size="14" class="svg-text">Загрузка истории...</text>';
+    return;
+  }
+  if (!commits.length) {
+    svg.setAttribute('viewBox', '0 0 920 260');
+    svg.setAttribute('height', 260);
+    svg.innerHTML = '<text x="28" y="54" fill="#a8b1bf" font-size="14" class="svg-text">Коммитов нет.</text>';
+    return;
+  }
+
+  const rows = buildRows();
+  const { laneByHash, laneCount } = laneModel();
+  const rowHeight = 64;
+  const top = 40;
+  const laneGap = 42;
+  const laneStart = 48;
+  const laneX = (lane) => laneStart + lane * laneGap;
+  const cardX = laneStart + laneCount * laneGap + 24;
+  const width = Math.max(920, wrap.clientWidth - 18);
+  const cardWidth = Math.max(420, width - cardX - 34);
+  const height = Math.max(wrap.clientHeight - 18, top + rows.length * rowHeight + 42);
+  const rowY = (rowIndex) => top + rowIndex * rowHeight;
+
+  svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
+  svg.setAttribute('height', height);
+
+  const rowByHash = new Map();
+  rows.forEach((row, rowIndex) => {
+    if (row.type === 'commit') rowByHash.set(row.commit.hash, rowIndex);
+  });
+
+  const guides = Array.from({ length: laneCount }, (_, lane) => (
+    `<line x1="${laneX(lane)}" y1="24" x2="${laneX(lane)}" y2="${height - 24}" stroke="#27303d" stroke-width="1"/>`
+  )).join('');
+
+  const edges = rows.map((row, rowIndex) => {
+    if (row.type !== 'commit') return '';
+    const commit = row.commit;
+    const sourceLane = laneByHash.get(commit.hash) || 0;
+    const sx = laneX(sourceLane);
+    const sy = rowY(rowIndex) + 12;
+    return commit.parents.map((parent, parentIndex) => {
+      const parentRow = rowByHash.get(parent);
+      let targetRow = parentRow;
+      let dashed = '';
+      if (targetRow === undefined) {
+        const parentIndexLoaded = indexByHash.get(parent);
+        if (parentIndexLoaded === undefined) return '';
+        targetRow = clusterForIndex(rows, parentIndexLoaded);
+        dashed = ' stroke-dasharray="5 5"';
+      }
+      if (targetRow < 0 || targetRow === undefined) return '';
+      const parentLane = laneByHash.get(parent) ?? sourceLane;
+      const tx = laneX(parentLane);
+      const ty = rowY(targetRow) - 12;
+      const mid = (sy + ty) / 2;
+      const color = parentIndex === 0 ? '#58d0b6' : '#e6b85c';
+      return `<path d="M ${sx} ${sy} C ${sx} ${mid}, ${tx} ${mid}, ${tx} ${ty}" stroke="${color}" stroke-width="2" fill="none" opacity=".72"${dashed}/>`;
+    }).join('');
+  }).join('');
+
+  const nodes = rows.map((row, rowIndex) => {
+    const y = rowY(rowIndex);
+    if (row.type === 'cluster') {
+      return `
+        <g class="cluster-node" onclick="selectByIndex(${row.midpoint})">
+          <circle cx="${laneX(0)}" cy="${y}" r="6" fill="#e6b85c" opacity=".85"/>
+          <rect x="${cardX}" y="${y - 20}" rx="8" ry="8" width="${cardWidth}" height="40" fill="#171b24" stroke="#3b414d"/>
+          <text x="${cardX + 14}" y="${y - 2}" font-size="12" fill="#f3d493" font-weight="800" class="svg-text">${esc(clusterLabel(row))}</text>
+          <text x="${cardX + 14}" y="${y + 13}" font-size="11" fill="#8e98a6" class="svg-text">свернутый участок истории</text>
+        </g>`;
+    }
+
+    const commit = row.commit;
+    const lane = laneByHash.get(commit.hash) || 0;
+    const active = commit.hash === selected;
+    const fill = active ? '#19362f' : '#141a23';
+    const stroke = active ? '#58d0b6' : '#333c4a';
+    const dot = active ? '#58d0b6' : (commit.parents.length > 1 ? '#e6b85c' : '#d8dee8');
+    const messageLimit = Math.max(32, Math.floor(cardWidth / 8.4));
+    const flags = [
+      commit.parents.length > 1 ? 'merge' : '',
+      childCount(commit.hash) > 1 ? 'branch' : '',
+    ].filter(Boolean).join(' · ');
+    const flagText = flags ? ` · ${flags}` : '';
+
+    return `
+      <g class="commit-node" data-hash="${commit.hash}" onclick="selectCommit('${commit.hash}')">
+        <circle cx="${laneX(lane)}" cy="${y}" r="${active ? 7 : 5}" fill="${dot}" stroke="#0d1016" stroke-width="2"/>
+        <rect x="${cardX}" y="${y - 25}" rx="8" ry="8" width="${cardWidth}" height="50" fill="${fill}" stroke="${stroke}"/>
+        <text x="${cardX + 14}" y="${y - 7}" font-size="12" fill="#dffbf5" font-weight="800" class="svg-mono">${esc(commit.shortHash)}</text>
+        <text x="${cardX + 104}" y="${y - 7}" font-size="11" fill="#8e98a6" class="svg-text">${esc(commit.date)}${esc(flagText)}</text>
+        <text x="${cardX + 14}" y="${y + 11}" font-size="12" fill="#edf1f7" class="svg-text">${esc(clip(commit.message || '(без сообщения)', messageLimit))}</text>
+      </g>`;
+  }).join('');
+
+  svg.innerHTML = `${guides}${edges}${nodes}`;
+}
+
+function ensureSelectedVisible() {
+  requestAnimationFrame(() => {
+    const graphNode = document.querySelector(`.commit-node[data-hash="${selected}"]`);
+    if (graphNode && graphNode.scrollIntoView) {
+      graphNode.scrollIntoView({ block: 'center', inline: 'nearest' });
+    }
+    const row = document.querySelector(`.commit-row[data-hash="${selected}"]`);
+    if (row && row.scrollIntoView) {
+      row.scrollIntoView({ block: 'nearest' });
+    }
+  });
+}
+
+function paint() {
+  rebuildMatches();
+  paintToolbar();
+  paintDetails();
+  paintList();
+  paintGraph();
+  ensureSelectedVisible();
+}
+
+document.getElementById('searchBox').addEventListener('input', (event) => {
+  query = event.target.value;
+  matchCursor = 0;
+  paint();
+});
+document.getElementById('searchBox').addEventListener('keydown', (event) => {
+  if (event.key === 'Enter') {
+    event.preventDefault();
+    jumpSearch();
+  }
+  if (event.key === 'Escape') {
+    query = '';
+    event.currentTarget.value = '';
+    paint();
+  }
+});
+document.getElementById('prevMatch').addEventListener('click', () => moveMatch(-1));
+document.getElementById('nextMatch').addEventListener('click', () => moveMatch(1));
+document.getElementById('jumpSearch').addEventListener('click', jumpSearch);
+document.getElementById('headButton').addEventListener('click', () => lookupRef('HEAD'));
+document.getElementById('modeButton').addEventListener('click', () => {
+  condensed = !condensed;
+  paint();
+});
+document.addEventListener('keydown', (event) => {
+  if (event.target && event.target.tagName === 'INPUT') return;
+  if (event.key === 'ArrowDown') {
+    event.preventDefault();
+    selectByIndex(selectedIndex() + 1);
+  } else if (event.key === 'ArrowUp') {
+    event.preventDefault();
+    selectByIndex(selectedIndex() - 1);
+  } else if (event.key === '/') {
+    event.preventDefault();
+    document.getElementById('searchBox').focus();
+  }
+});
+addEventListener('resize', paintGraph, { passive: true });
+
+paint();
 </script>
 </body>
 </html>

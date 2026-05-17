@@ -10,5 +10,5 @@ class ListCommitsUseCase:
     def __init__(self, git_backend: GitBackend) -> None:
         self.git_backend = git_backend
 
-    def execute(self, repo_path: Path, limit: int = 20) -> list[Commit]:
-        return self.git_backend.list_commits(repo_path, limit=limit)
+    def execute(self, repo_path: Path, limit: int = 20, revision: str = "HEAD") -> list[Commit]:
+        return self.git_backend.list_commits(repo_path, limit=limit, revision=revision)
