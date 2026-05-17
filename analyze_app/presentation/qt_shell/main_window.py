@@ -86,10 +86,16 @@ class RepositoryRefreshResult:
     summary: str
     metrics: dict[str, tuple[str, str, str]]
     commits: list
-    project_map: object
+    project_map: ProjectGraph | None
     workspace_files: list[dict[str, object]]
     workspace_diffs: dict[str, str]
     working_tree_message: str | None
+
+
+@dataclass(slots=True)
+class ProjectMapBuildResult:
+    repo_id: int
+    project_map: ProjectGraph
 
 
 @dataclass(slots=True)
@@ -149,11 +155,6 @@ class RepositoryRefreshWorker(QObject):
             use_cache=False,
         )
         commits = ListCommitsUseCase(self.git_backend).execute(repo_path, limit=50)
-        project_map = BuildProjectMapUseCase(self.git_backend, AstMapBuilder(), self.store).execute(
-            self.repo.repo_id,
-            repo_path,
-            use_cache=False,
-        )
 
         status_lines = self.git_backend.status_porcelain(repo_path)
         file_rows = _parse_status_rows(status_lines)
@@ -194,11 +195,36 @@ class RepositoryRefreshWorker(QObject):
             summary="",
             metrics=metrics,
             commits=commits,
-            project_map=project_map,
+            project_map=None,
             workspace_files=workspace_files,
             workspace_diffs=workspace_diffs,
             working_tree_message=working_tree_message,
         )
+
+
+class ProjectMapBuildWorker(QObject):
+    finished = Signal(object)
+    failed = Signal(int, str)
+
+    def __init__(self, repo_id: int, repo_path: Path, git_backend: GitBackend, store: SqliteStore) -> None:
+        super().__init__()
+        self.repo_id = repo_id
+        self.repo_path = repo_path
+        self.git_backend = git_backend
+        self.store = store
+
+    @Slot()
+    def run(self) -> None:
+        try:
+            project_map = BuildProjectMapUseCase(self.git_backend, AstMapBuilder(), self.store).execute(
+                self.repo_id,
+                self.repo_path,
+                use_cache=False,
+            )
+        except Exception as error:  # noqa: BLE001
+            self.failed.emit(self.repo_id, str(error))
+            return
+        self.finished.emit(ProjectMapBuildResult(repo_id=self.repo_id, project_map=project_map))
 
 
 class OverviewGenerationWorker(QObject):
@@ -276,6 +302,8 @@ class MainWindow(QMainWindow):
         self.import_worker: ImportRepositoryWorker | None = None
         self.refresh_thread: QThread | None = None
         self.refresh_worker: RepositoryRefreshWorker | None = None
+        self.map_thread: QThread | None = None
+        self.map_worker: ProjectMapBuildWorker | None = None
         self.overview_thread: QThread | None = None
         self.overview_worker: OverviewGenerationWorker | None = None
         self.commit_ai_thread: QThread | None = None
@@ -311,7 +339,7 @@ class MainWindow(QMainWindow):
         self.menu.add_repository.triggered.connect(self._add_repository)
         self.menu.refresh_all.triggered.connect(self._refresh_all)
         self.menu.refresh_current.triggered.connect(self._refresh_current)
-        self.menu.rebuild_map.triggered.connect(self._refresh_current)
+        self.menu.rebuild_map.triggered.connect(self._refresh_map)
         self.menu.run_working_tree.triggered.connect(self._refresh_current)
         self.menu.run_commit.triggered.connect(self._refresh_commits)
         self.menu.toggle_sidebar.triggered.connect(lambda: self.sidebar.setVisible(not self.sidebar.isVisible()))
@@ -324,6 +352,7 @@ class MainWindow(QMainWindow):
         self.tabs.workspace_tab.stage_requested.connect(self._stage_workspace_file)
         self.tabs.workspace_tab.open_requested.connect(self._open_repository_file)
         self.tabs.project_map_tab.open_requested.connect(self._open_repository_file)
+        self.tabs.project_map_tab.rebuild_requested.connect(self._refresh_map)
 
     def _bind_tab_actions(self) -> None:
         self.tabs.overview_tab.regenerate_requested.connect(self._regenerate_overview)
@@ -475,7 +504,11 @@ class MainWindow(QMainWindow):
         self.tabs.overview_tab.update_metrics({})
         self.tabs.overview_tab.load_readme(Path(self.current_repo.working_path))
         self.tabs.commits_tab.clear()
-        self.tabs.project_map_tab.clear()
+        cached_map = self.store.load_project_map(self.current_repo.repo_id)
+        if cached_map and cached_map.nodes:
+            self.tabs.project_map_tab.set_project_map(cached_map)
+        else:
+            self.tabs.project_map_tab.clear()
         self.tabs.workspace_tab.clear()
         self.status.showMessage(f"No saved analysis yet: {self.current_repo.title}", 5_000)
 
@@ -656,7 +689,6 @@ class MainWindow(QMainWindow):
     def _show_repo_loading(self, repo: RepoListItemVM) -> None:
         self.tabs.overview_tab.set_loading(repo.title)
         self.tabs.commits_tab.set_loading()
-        self.tabs.project_map_tab.set_loading()
         self.tabs.workspace_tab.set_loading()
         self.status.showMessage(f"Analysis started: {repo.title}", 5_000)
 
@@ -738,7 +770,8 @@ class MainWindow(QMainWindow):
         self.tabs.overview_tab.update_metrics(result.metrics)
         self.tabs.overview_tab.load_readme(result.repo_path)
         self.tabs.commits_tab.set_commits(result.commits)
-        self.tabs.project_map_tab.set_project_map(result.project_map)
+        if result.project_map is not None:
+            self.tabs.project_map_tab.set_project_map(result.project_map)
         self.tabs.workspace_tab.set_workspace_data(result.workspace_files, result.workspace_diffs)
 
     @Slot(int, str)
@@ -747,7 +780,6 @@ class MainWindow(QMainWindow):
             self.tabs.overview_tab.update_project_stats(self.current_repo.title, 0, 0)
             self.tabs.overview_tab.update_metrics({})
             self.tabs.commits_tab.clear()
-            self.tabs.project_map_tab.clear()
             self.tabs.workspace_tab.clear()
             self.status.showMessage(f"Repository analysis failed: {error}", 8_000)
 
@@ -994,10 +1026,55 @@ class MainWindow(QMainWindow):
 
     def _refresh_map(self) -> None:
         if not self.current_repo:
+            self.status.showMessage("Select a repository in the left sidebar.", 4_000)
             return
-        use_case = BuildProjectMapUseCase(self.git_backend, AstMapBuilder(), self.store)
-        project_map = use_case.execute(self.current_repo.repo_id, Path(self.current_repo.working_path), use_cache=True)
-        self.tabs.project_map_tab.set_project_map(project_map)
+        if self.map_thread is not None and self.map_thread.isRunning():
+            self.status.showMessage("Project map build is already running.", 4_000)
+            return
+
+        repo_id = self.current_repo.repo_id
+        repo_path = Path(self.current_repo.working_path)
+        self.tabs.project_map_tab.set_loading()
+        self.status.showMessage(f"Project map build started: {self.current_repo.title}", 4_000)
+
+        self.map_thread = QThread(self)
+        self.map_worker = ProjectMapBuildWorker(repo_id, repo_path, self.git_backend, self.store)
+        self.map_worker.moveToThread(self.map_thread)
+        self.map_thread.started.connect(self.map_worker.run)
+        self.map_worker.finished.connect(self._on_map_build_finished)
+        self.map_worker.failed.connect(self._on_map_build_failed)
+        self.map_worker.finished.connect(self.map_thread.quit)
+        self.map_worker.failed.connect(self.map_thread.quit)
+        self.map_thread.finished.connect(self._cleanup_map_worker)
+        self.map_thread.start()
+
+    @Slot(object)
+    def _on_map_build_finished(self, result: ProjectMapBuildResult) -> None:
+        if self.current_repo and self.current_repo.repo_id == result.repo_id:
+            self.tabs.project_map_tab.set_project_map(result.project_map)
+            self.status.showMessage(
+                f"Project map updated: nodes={len(result.project_map.nodes)}, edges={len(result.project_map.edges)}",
+                5_000,
+            )
+
+    @Slot(int, str)
+    def _on_map_build_failed(self, repo_id: int, error: str) -> None:
+        if self.current_repo and self.current_repo.repo_id == repo_id:
+            cached_map = self.store.load_project_map(repo_id)
+            if cached_map and cached_map.nodes:
+                self.tabs.project_map_tab.set_project_map(cached_map)
+            else:
+                self.tabs.project_map_tab.clear()
+            self.status.showMessage(f"Project map build failed: {error}", 8_000)
+
+    @Slot()
+    def _cleanup_map_worker(self) -> None:
+        if self.map_worker:
+            self.map_worker.deleteLater()
+            self.map_worker = None
+        if self.map_thread:
+            self.map_thread.deleteLater()
+            self.map_thread = None
 
     def _refresh_working_tree(self) -> None:
         if not self.current_repo:
@@ -1153,16 +1230,18 @@ class MainWindow(QMainWindow):
 
 
 def _snapshot_payload_from_result(result: RepositoryRefreshResult) -> dict:
-    return {
+    payload = {
         "files_count": result.files_count,
         "loc": result.loc,
         "metrics": {name: list(values) for name, values in result.metrics.items()},
         "commits": [_commit_to_payload(commit) for commit in result.commits],
-        "project_map": _project_map_to_payload(result.project_map),
         "workspace_files": result.workspace_files,
         "workspace_diffs": result.workspace_diffs,
         "working_tree_message": result.working_tree_message,
     }
+    if result.project_map is not None:
+        payload["project_map"] = _project_map_to_payload(result.project_map)
+    return payload
 
 
 def _repository_result_from_snapshot(
@@ -1181,6 +1260,9 @@ def _repository_result_from_snapshot(
     raw_project_map = payload.get("project_map") or {}
     if not isinstance(raw_project_map, dict):
         raw_project_map = {}
+    project_map = _project_map_from_payload(raw_project_map)
+    if not project_map.nodes:
+        project_map = store.load_project_map(repo.repo_id) or project_map
     metrics = {
         str(name): _metric_tuple(values)
         for name, values in raw_metrics.items()
@@ -1208,7 +1290,7 @@ def _repository_result_from_snapshot(
         summary=summary,
         metrics=metrics,
         commits=commits,
-        project_map=_project_map_from_payload(raw_project_map),
+        project_map=project_map,
         workspace_files=workspace_files,
         workspace_diffs=workspace_diffs,
         working_tree_message=None,

@@ -3,10 +3,10 @@ from __future__ import annotations
 from pathlib import Path
 from urllib.parse import parse_qs
 
-from PySide6.QtCore import QSignalBlocker, QUrl, Signal
+from PySide6.QtCore import QUrl, Signal
 from PySide6.QtWebEngineCore import QWebEnginePage
 from PySide6.QtWebEngineWidgets import QWebEngineView
-from PySide6.QtWidgets import QComboBox, QHBoxLayout, QLabel, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QVBoxLayout, QWidget
 
 from analyze_app.domain.entities import ProjectGraph
 from analyze_app.presentation.qt_shell.web_view_utils import render_html_template
@@ -14,6 +14,7 @@ from analyze_app.presentation.qt_shell.web_view_utils import render_html_templat
 
 class ProjectMapWebPage(QWebEnginePage):
     open_requested = Signal(str)
+    rebuild_requested = Signal()
 
     def acceptNavigationRequest(self, url: QUrl, nav_type, is_main_frame: bool) -> bool:  # type: ignore[override]
         if url.scheme() != "analyzeapp":
@@ -26,36 +27,31 @@ class ProjectMapWebPage(QWebEnginePage):
         file_path = (params.get("file") or [""])[0]
         if action == "open" and file_path:
             self.open_requested.emit(file_path)
+        elif action == "rebuild":
+            self.rebuild_requested.emit()
         return False
 
 
 class ProjectMapTab(QWidget):
     open_requested = Signal(str)
+    rebuild_requested = Signal()
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
-        self.mode_combo = QComboBox()
-        self.mode_combo.addItems(["Structural view", "Hotspot overlay"])
-
-        top = QHBoxLayout()
-        top.addWidget(QLabel("Mode:"))
-        top.addWidget(self.mode_combo)
-        top.addStretch()
-
         self.web = QWebEngineView()
         self.page = ProjectMapWebPage(self.web)
         self.page.open_requested.connect(self.open_requested.emit)
+        self.page.rebuild_requested.connect(self.rebuild_requested.emit)
         self.web.setPage(self.page)
 
         root = QVBoxLayout(self)
-        root.addLayout(top)
+        root.setContentsMargins(0, 0, 0, 0)
         root.addWidget(self.web)
 
         self._nodes: list[dict[str, str | int]] = []
         self._edges: list[dict[str, str]] = []
         self._loading = False
 
-        self.mode_combo.currentTextChanged.connect(self._render_current_state)
         self._render_current_state()
 
     def set_project_map(self, graph: ProjectGraph) -> None:
@@ -93,11 +89,6 @@ class ProjectMapTab(QWidget):
         self._render_current_state()
 
     def set_mode(self, mode: str) -> None:
-        index = self.mode_combo.findText(mode)
-        if index < 0:
-            return
-        with QSignalBlocker(self.mode_combo):
-            self.mode_combo.setCurrentIndex(index)
         self._render_current_state()
 
     def _render_current_state(self) -> None:
@@ -107,7 +98,7 @@ class ProjectMapTab(QWidget):
             {
                 "nodes": self._nodes,
                 "edges": self._edges,
-                "mode": self.mode_combo.currentText(),
+                "mode": "Structural view",
                 "loading": self._loading,
             },
         )

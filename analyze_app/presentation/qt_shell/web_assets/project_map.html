@@ -88,6 +88,13 @@
       flex-wrap: wrap;
     }
 
+    .toolbar-actions {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
     .mode-switch {
       display: inline-flex;
       border: 1px solid var(--stroke);
@@ -111,6 +118,30 @@
     .mode-btn.active {
       background: rgba(255, 255, 255, 0.16);
       color: #f0f6ff;
+    }
+
+    .rebuild-map-btn {
+      border: 1px solid rgba(141, 238, 200, 0.8);
+      border-radius: 10px;
+      background: linear-gradient(180deg, #2dd4bf, #119d8d);
+      box-shadow: 0 10px 24px rgba(45, 212, 191, 0.22);
+      color: #041312;
+      cursor: pointer;
+      font-size: 12px;
+      font-weight: 750;
+      padding: 8px 12px;
+      transition: transform 0.15s ease, box-shadow 0.15s ease, opacity 0.15s ease;
+    }
+
+    .rebuild-map-btn:hover {
+      box-shadow: 0 12px 28px rgba(45, 212, 191, 0.34);
+      transform: translateY(-1px);
+    }
+
+    .rebuild-map-btn:disabled {
+      cursor: wait;
+      opacity: 0.58;
+      transform: none;
     }
 
     .stats {
@@ -349,9 +380,12 @@
           <h1 class="title">Интерактивная карта проекта</h1>
           <p class="subtitle">Граф: module/file → class → function. Клик по узлу показывает зависимости и метрики.</p>
         </div>
-        <div class="mode-switch" role="tablist" aria-label="View mode">
-          <button class="mode-btn" data-mode="structural">Structural view</button>
-          <button class="mode-btn" data-mode="hotspot">Hotspot overlay</button>
+        <div class="toolbar-actions">
+          <div class="mode-switch" role="tablist" aria-label="View mode">
+            <button class="mode-btn" data-mode="structural">Structural view</button>
+            <button class="mode-btn" data-mode="hotspot">Hotspot overlay</button>
+          </div>
+          <button class="rebuild-map-btn" id="rebuildMapBtn" type="button">Построить карту</button>
         </div>
       </header>
       <div class="summary" id="summary"></div>
@@ -403,6 +437,7 @@
       hoveredNodeId: null,
       camera: { x: 0, y: 0, scale: 1 },
       cameraDirty: false,
+      layoutTicks: 0,
       world: { width: 0, height: 0 },
     };
 
@@ -424,6 +459,8 @@
     const summaryEl = document.getElementById('summary');
     const emptyEl = document.getElementById('empty');
     const modeButtons = [...document.querySelectorAll('.mode-btn')];
+    const rebuildMapBtn = document.getElementById('rebuildMapBtn');
+    let drawQueued = false;
 
     const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
     const enc = encodeURIComponent;
@@ -452,9 +489,9 @@
       return Math.max(...state.nodes.map((n) => n.hotspot), 0);
     }
 
-    function radiusForNode(node) {
+    function radiusForNode(node, hotMax = maxHotspot()) {
       const baseRadius = node.kind === 'file' ? 11 : node.kind === 'class' ? 9 : 7;
-      const hotspotBoost = state.mode === MODE.HOTSPOT ? clamp(node.hotspot / (maxHotspot() || 1), 0, 1) * 5 : 0;
+      const hotspotBoost = state.mode === MODE.HOTSPOT ? clamp(node.hotspot / (hotMax || 1), 0, 1) * 5 : 0;
       return baseRadius + hotspotBoost;
     }
 
@@ -462,6 +499,21 @@
       const margin = node.radius + 24;
       node.x = clamp(node.x, margin, Math.max(margin, state.world.width - margin));
       node.y = clamp(node.y, margin, Math.max(margin, state.world.height - margin));
+    }
+
+    function requestDraw() {
+      if (drawQueued) return;
+      drawQueued = true;
+      requestAnimationFrame(() => {
+        drawQueued = false;
+        drawGraph();
+      });
+    }
+
+    function layoutLimit() {
+      if (state.nodes.length > 2500) return 45;
+      if (state.nodes.length > 1000) return 90;
+      return 220;
     }
 
     function colorForKind(kind) {
@@ -488,11 +540,12 @@
       const rows = Math.max(1, Math.ceil((state.nodes.length || 1) / cols));
       state.world.width = Math.max(w, cols * spacing + 140);
       state.world.height = Math.max(h, rows * spacing + 140);
+      const hotMax = maxHotspot();
 
       state.nodes.forEach((node, i) => {
         const col = i % cols;
         const row = Math.floor(i / cols);
-        node.radius = radiusForNode(node);
+        node.radius = radiusForNode(node, hotMax);
         node.x = 70 + col * spacing + deterministicOffset(`${node.id}:x`, 12);
         node.y = 70 + row * spacing + deterministicOffset(`${node.id}:y`, 12);
         node.vx = deterministicOffset(`${node.id}:vx`, 0.8);
@@ -500,7 +553,8 @@
         clampNodeToWorld(node);
       });
 
-      for (let i = 0; i < 80; i += 1) {
+      const warmupPasses = state.nodes.length > 1500 ? 0 : state.nodes.length > 500 ? 6 : 36;
+      for (let i = 0; i < warmupPasses; i += 1) {
         applyLayoutForces();
       }
       centerCamera();
@@ -511,7 +565,7 @@
       const height = canvas.clientHeight || 500;
       const worldWidth = state.world.width || width;
       const worldHeight = state.world.height || height;
-      const scale = clamp(Math.min((width - 48) / worldWidth, (height - 48) / worldHeight), 0.35, 1);
+      const scale = clamp(Math.min((width - 48) / worldWidth, (height - 48) / worldHeight), 0.06, 1);
       state.camera.scale = scale;
       state.camera.x = (width - worldWidth * scale) / 2;
       state.camera.y = (height - worldHeight * scale) / 2;
@@ -522,37 +576,34 @@
       const attraction = 0.008;
       const idealEdgeLength = 105;
       const damping = 0.84;
+      const hotMax = maxHotspot();
 
       state.nodes.forEach((node) => {
-        node.radius = radiusForNode(node);
+        node.radius = radiusForNode(node, hotMax);
       });
 
-      for (let i = 0; i < state.nodes.length; i += 1) {
-        const a = state.nodes[i];
-        for (let j = i + 1; j < state.nodes.length; j += 1) {
-          const b = state.nodes[j];
-          let dx = a.x - b.x;
-          let dy = a.y - b.y;
-          let distSq = dx * dx + dy * dy;
-          if (distSq < 0.01) {
-            const angle = (hashString(`${a.id}:${b.id}`) % 628) / 100;
-            dx = Math.cos(angle);
-            dy = Math.sin(angle);
-            distSq = 1;
-          }
-          const dist = Math.sqrt(distSq);
-          dx /= dist;
-          dy /= dist;
-          const force = Math.min(repulsion / distSq, 1.8);
-          const minDist = a.radius + b.radius + 16;
-          const collisionForce = dist < minDist ? (minDist - dist) * 0.08 : 0;
-          const totalForce = force + collisionForce;
-          a.vx += dx * totalForce;
-          a.vy += dy * totalForce;
-          b.vx -= dx * totalForce;
-          b.vy -= dy * totalForce;
+      forNearbyPairs(96, (a, b) => {
+        let dx = a.x - b.x;
+        let dy = a.y - b.y;
+        let distSq = dx * dx + dy * dy;
+        if (distSq < 0.01) {
+          const angle = (hashString(`${a.id}:${b.id}`) % 628) / 100;
+          dx = Math.cos(angle);
+          dy = Math.sin(angle);
+          distSq = 1;
         }
-      }
+        const dist = Math.sqrt(distSq);
+        dx /= dist;
+        dy /= dist;
+        const force = Math.min(repulsion / Math.max(distSq, 90), 1.8);
+        const minDist = a.radius + b.radius + 16;
+        const collisionForce = dist < minDist ? (minDist - dist) * 0.08 : 0;
+        const totalForce = force + collisionForce;
+        a.vx += dx * totalForce;
+        a.vy += dy * totalForce;
+        b.vx -= dx * totalForce;
+        b.vy -= dy * totalForce;
+      });
 
       state.edges.forEach((edge) => {
         const source = nodeById.get(edge.source);
@@ -584,38 +635,65 @@
       resolveCollisions(2);
     }
 
-    function resolveCollisions(iterations) {
-      for (let pass = 0; pass < iterations; pass += 1) {
-        for (let i = 0; i < state.nodes.length; i += 1) {
-          const a = state.nodes[i];
-          for (let j = i + 1; j < state.nodes.length; j += 1) {
-            const b = state.nodes[j];
-            let dx = a.x - b.x;
-            let dy = a.y - b.y;
-            let dist = Math.sqrt(dx * dx + dy * dy);
-            if (dist < 0.01) {
-              const angle = (hashString(`${a.id}:${b.id}:resolve`) % 628) / 100;
-              dx = Math.cos(angle);
-              dy = Math.sin(angle);
-              dist = 1;
-            }
-            const minDist = a.radius + b.radius + 12;
-            if (dist >= minDist) continue;
-            const shift = (minDist - dist) / 2;
-            const nx = dx / dist;
-            const ny = dy / dist;
-            a.x += nx * shift;
-            a.y += ny * shift;
-            b.x -= nx * shift;
-            b.y -= ny * shift;
-            a.vx *= 0.72;
-            a.vy *= 0.72;
-            b.vx *= 0.72;
-            b.vy *= 0.72;
-            clampNodeToWorld(a);
-            clampNodeToWorld(b);
+    function forNearbyPairs(cellSize, callback) {
+      const grid = new Map();
+      state.nodes.forEach((node, index) => {
+        const cx = Math.floor(node.x / cellSize);
+        const cy = Math.floor(node.y / cellSize);
+        const key = `${cx},${cy}`;
+        if (!grid.has(key)) grid.set(key, []);
+        grid.get(key).push(index);
+      });
+
+      const seen = new Set();
+      grid.forEach((indices, key) => {
+        const [cx, cy] = key.split(',').map(Number);
+        for (let oy = -1; oy <= 1; oy += 1) {
+          for (let ox = -1; ox <= 1; ox += 1) {
+            const other = grid.get(`${cx + ox},${cy + oy}`);
+            if (!other) continue;
+            indices.forEach((i) => {
+              other.forEach((j) => {
+                if (i >= j) return;
+                const pairKey = `${i}:${j}`;
+                if (seen.has(pairKey)) return;
+                seen.add(pairKey);
+                callback(state.nodes[i], state.nodes[j]);
+              });
+            });
           }
         }
+      });
+    }
+
+    function resolveCollisions(iterations) {
+      for (let pass = 0; pass < iterations; pass += 1) {
+        forNearbyPairs(80, (a, b) => {
+          let dx = a.x - b.x;
+          let dy = a.y - b.y;
+          let dist = Math.sqrt(dx * dx + dy * dy);
+          if (dist < 0.01) {
+            const angle = (hashString(`${a.id}:${b.id}:resolve`) % 628) / 100;
+            dx = Math.cos(angle);
+            dy = Math.sin(angle);
+            dist = 1;
+          }
+          const minDist = a.radius + b.radius + 12;
+          if (dist >= minDist) return;
+          const shift = (minDist - dist) / 2;
+          const nx = dx / dist;
+          const ny = dy / dist;
+          a.x += nx * shift;
+          a.y += ny * shift;
+          b.x -= nx * shift;
+          b.y -= ny * shift;
+          a.vx *= 0.72;
+          a.vy *= 0.72;
+          b.vx *= 0.72;
+          b.vy *= 0.72;
+          clampNodeToWorld(a);
+          clampNodeToWorld(b);
+        });
       }
     }
 
@@ -648,7 +726,7 @@
       });
 
       state.nodes.forEach((node) => {
-        const radius = radiusForNode(node);
+        const radius = radiusForNode(node, hotMax);
         node.radius = radius;
 
         const hovered = node.id === state.hoveredNodeId;
@@ -720,6 +798,7 @@
           <p class="muted">Кликни по узлу на графе чтобы увидеть связи, уровень вложенности и hotspot score.</p>
         `;
         relatedEl.innerHTML = '<div class="muted">Нет связей для отображения.</div>';
+        requestDraw();
         return;
       }
 
@@ -756,6 +835,7 @@
           `;
         }).join('')
         : '<div class="muted">У выбранного узла пока нет видимых связей.</div>';
+      requestDraw();
     }
 
     function pickNodeAt(screenX, screenY) {
@@ -780,12 +860,17 @@
       updateSummary();
       const modeLabel = mode === MODE.HOTSPOT ? 'Hotspot overlay' : 'Structural view';
       statusEl.textContent = `Mode: ${modeLabel}. Управление: drag для панорамы, wheel для zoom, click по узлу для деталей.`;
+      requestDraw();
     }
 
     function bindInteractions() {
       modeButtons.forEach((button) => {
         button.addEventListener('click', () => applyMode(button.dataset.mode));
       });
+      if (rebuildMapBtn) {
+        rebuildMapBtn.disabled = loading;
+        rebuildMapBtn.addEventListener('click', () => sendToHost('rebuild'));
+      }
 
       detailsEl.addEventListener('click', (event) => {
         const target = event.target instanceof Element ? event.target.closest('[data-action="open"]') : null;
@@ -823,15 +908,21 @@
           state.cameraDirty = true;
           lastX = event.clientX;
           lastY = event.clientY;
+          requestDraw();
           return;
         }
 
         const hovered = pickNodeAt(x, y);
-        state.hoveredNodeId = hovered ? hovered.id : null;
+        const hoveredNodeId = hovered ? hovered.id : null;
+        if (hoveredNodeId !== state.hoveredNodeId) {
+          state.hoveredNodeId = hoveredNodeId;
+          requestDraw();
+        }
       });
 
       canvas.addEventListener('mouseleave', () => {
         state.hoveredNodeId = null;
+        requestDraw();
       });
 
       canvas.addEventListener('click', (event) => {
@@ -846,7 +937,7 @@
         event.preventDefault();
         const direction = event.deltaY > 0 ? -0.09 : 0.09;
         const prevScale = state.camera.scale;
-        state.camera.scale = clamp(state.camera.scale + direction, 0.4, 2.4);
+        state.camera.scale = clamp(state.camera.scale + direction, 0.06, 2.4);
         state.cameraDirty = true;
 
         const rect = canvas.getBoundingClientRect();
@@ -858,16 +949,19 @@
 
         state.camera.x = x - wx * state.camera.scale;
         state.camera.y = y - wy * state.camera.scale;
+        requestDraw();
       }, { passive: false });
 
       window.addEventListener('resize', () => {
         if (!state.cameraDirty) centerCamera();
-        drawGraph();
+        requestDraw();
       });
     }
 
     function tick() {
+      if (state.layoutTicks >= layoutLimit()) return;
       applyLayoutForces();
+      state.layoutTicks += 1;
       drawGraph();
       requestAnimationFrame(tick);
     }
@@ -885,7 +979,8 @@
       setSelectedNode(state.nodes[0] ? state.nodes[0].id : null);
       applyMode(state.mode);
       bindInteractions();
-      tick();
+      drawGraph();
+      requestAnimationFrame(tick);
     }
 
     bootstrap();

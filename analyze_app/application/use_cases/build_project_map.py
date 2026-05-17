@@ -22,7 +22,14 @@ class BuildProjectMapUseCase:
             if cached and cached.nodes:
                 return cached
 
-        churn = self.git_backend.file_churn(repo_path, max_commits=max_commits)
-        project_map = self.map_builder.build(repo_path, churn=churn)
+        try:
+            tracked_files = self.git_backend.list_tracked_files(repo_path)
+        except Exception:  # noqa: BLE001
+            tracked_files = None
+        try:
+            churn = self.git_backend.file_churn(repo_path, max_commits=max_commits)
+        except Exception:  # noqa: BLE001
+            churn = {}
+        project_map = self.map_builder.build(repo_path, churn=churn, tracked_files=tracked_files)
         self.store.save_project_map(repo_id, project_map)
         return project_map
