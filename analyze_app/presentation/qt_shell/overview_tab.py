@@ -27,12 +27,12 @@ class OverviewTab(QWidget):
     METRICS_ORDER: list[tuple[str, str]] = [
         ("lint", "Линт"),
         ("typing_health", "Типы"),
-        ("tests", "Тесты"),
         ("complexity", "Сложность"),
         ("maintainability", "Поддержка"),
         ("dead_code", "Мертвый код"),
         ("duplication", "Дубли"),
         ("ai_signal", "AI-сигнал"),
+        ("tests", "Тесты"),
     ]
 
     def __init__(self, parent=None) -> None:

@@ -897,18 +897,6 @@ class MainWindow(QMainWindow):
             self._fmt_thresholds("<=", mypy_thr),
         )
 
-        tests = PytestRunner().run(repo_path)
-        if tests.total > 0:
-            failed_rate = (tests.failed / tests.total) * 100.0
-            test_thr = thresholds["tests_failed_rate_pct"]
-            metrics["tests"] = (
-                self._grade_lower_better(failed_rate, test_thr),
-                f"{tests.failed}/{tests.total} ({failed_rate:.1f}%)",
-                self._fmt_thresholds("<=", test_thr),
-            )
-        else:
-            metrics["tests"] = ("—", "n/a", "нет данных тестов")
-
         radon_issues = RadonRunner().run(repo_path)
         complexity_ranks = _extract_ranks(radon_issues)
         if complexity_ranks:
@@ -954,6 +942,18 @@ class MainWindow(QMainWindow):
             self._fmt_thresholds("<=", dup_thr),
         )
         metrics["ai_signal"] = self._calculate_ai_signal_metric(repo_path)
+
+        tests = PytestRunner().run(repo_path)
+        if tests.total > 0:
+            failed_rate = (tests.failed / tests.total) * 100.0
+            test_thr = thresholds["tests_failed_rate_pct"]
+            metrics["tests"] = (
+                self._grade_lower_better(failed_rate, test_thr),
+                f"{tests.failed}/{tests.total} ({failed_rate:.1f}%)",
+                self._fmt_thresholds("<=", test_thr),
+            )
+        else:
+            metrics["tests"] = ("—", "n/a", "нет данных тестов")
 
         return metrics
 
@@ -1604,22 +1604,6 @@ def _calculate_quality_metrics(
     )
     publish("typing_health")
 
-    if tests is None:
-        tests = PytestRunner().run(repo_path, on_test_result=on_test_result)
-    if on_tests_finished:
-        on_tests_finished(tests)
-    if tests.total > 0:
-        failed_rate = (tests.failed / tests.total) * 100.0
-        test_thr = thresholds["tests_failed_rate_pct"]
-        metrics["tests"] = (
-            _grade_lower_better(failed_rate, test_thr),
-            f"{tests.failed}/{tests.total} ({failed_rate:.1f}%)",
-            _fmt_thresholds("<=", test_thr),
-        )
-    else:
-        metrics["tests"] = ("—", "n/a", "нет данных тестов")
-    publish("tests")
-
     radon_issues = RadonRunner().run(repo_path)
     complexity_ranks = _extract_ranks(radon_issues)
     if complexity_ranks:
@@ -1670,6 +1654,22 @@ def _calculate_quality_metrics(
     publish("duplication")
     metrics["ai_signal"] = _calculate_ai_signal_metric(repo_id, repo_path, git_backend, store, use_cache=use_cache)
     publish("ai_signal")
+
+    if tests is None:
+        tests = PytestRunner().run(repo_path, on_test_result=on_test_result)
+    if on_tests_finished:
+        on_tests_finished(tests)
+    if tests.total > 0:
+        failed_rate = (tests.failed / tests.total) * 100.0
+        test_thr = thresholds["tests_failed_rate_pct"]
+        metrics["tests"] = (
+            _grade_lower_better(failed_rate, test_thr),
+            f"{tests.failed}/{tests.total} ({failed_rate:.1f}%)",
+            _fmt_thresholds("<=", test_thr),
+        )
+    else:
+        metrics["tests"] = ("—", "n/a", "нет данных тестов")
+    publish("tests")
 
     return metrics
 
