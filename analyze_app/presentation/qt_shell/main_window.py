@@ -24,6 +24,7 @@ from PySide6.QtWidgets import (
 
 from analyze_app.application.use_cases.build_project_map import BuildProjectMapUseCase
 from analyze_app.application.use_cases.build_project_overview import BuildProjectOverviewUseCase
+from analyze_app.application.use_cases.commit_and_push import CommitAndPushUseCase
 from analyze_app.application.use_cases.detect_ai_authorship import DetectAIAuthorshipUseCase
 from analyze_app.application.use_cases.get_working_tree_report import WorkingTreeReportUseCase
 from analyze_app.application.use_cases.import_repository import ImportRepositoryUseCase
@@ -59,6 +60,7 @@ from analyze_app.shared.config import AppConfig, DEFAULT_CONFIG
 
 
 COMMIT_HISTORY_LIMIT = 300
+WORKSPACE_TEXT_LIMIT = 300_000
 
 
 @dataclass(slots=True)
@@ -121,6 +123,13 @@ class CommitAISummaryResult:
     repo_id: int
     commit_hash: str
     summary: LLMResult
+
+
+@dataclass(slots=True)
+class WorkspaceGitActionResult:
+    repo_id: int
+    message: str
+    commit_hash: str | None = None
 
 
 class RepositoryRefreshWorker(QObject):
@@ -195,7 +204,7 @@ class RepositoryRefreshWorker(QObject):
             report.tests if report else None,
         )
         workspace_diffs = {
-            file_row["path"]: self.git_backend.read_working_tree_diff(repo_path, file_row["path"])
+            file_row["path"]: _read_working_tree_diff_for_row(self.git_backend, repo_path, file_row)
             for file_row in file_rows
         }
         working_tree_message = None
@@ -307,6 +316,53 @@ class CommitAISummaryWorker(QObject):
         )
 
 
+class WorkspaceGitActionWorker(QObject):
+    finished = Signal(object)
+    failed = Signal(int, str)
+
+    def __init__(
+        self,
+        repo_id: int,
+        repo_path: Path,
+        git_backend: GitBackend,
+        action: str,
+        message: str = "",
+        push_after_commit: bool = False,
+    ) -> None:
+        super().__init__()
+        self.repo_id = repo_id
+        self.repo_path = repo_path
+        self.git_backend = git_backend
+        self.action = action
+        self.message = message
+        self.push_after_commit = push_after_commit
+
+    @Slot()
+    def run(self) -> None:
+        try:
+            if self.action == "commit":
+                commit_hash = CommitAndPushUseCase(self.git_backend).execute(
+                    self.repo_path,
+                    message=self.message,
+                    push=self.push_after_commit,
+                )
+                suffix = " and pushed" if self.push_after_commit else ""
+                result = WorkspaceGitActionResult(
+                    repo_id=self.repo_id,
+                    commit_hash=commit_hash,
+                    message=f"Created commit {commit_hash[:10]}{suffix}.",
+                )
+            elif self.action == "push":
+                self.git_backend.push_current_branch(self.repo_path)
+                result = WorkspaceGitActionResult(repo_id=self.repo_id, message="Pushed current branch.")
+            else:
+                raise ValueError(f"Unknown workspace git action: {self.action}")
+        except Exception as error:  # noqa: BLE001
+            self.failed.emit(self.repo_id, str(error))
+            return
+        self.finished.emit(result)
+
+
 class MainWindow(QMainWindow):
     def __init__(self, store: SqliteStore, git_backend: GitBackend) -> None:
         super().__init__()
@@ -333,6 +389,8 @@ class MainWindow(QMainWindow):
         self.overview_worker: OverviewGenerationWorker | None = None
         self.commit_ai_thread: QThread | None = None
         self.commit_ai_worker: CommitAISummaryWorker | None = None
+        self.workspace_git_thread: QThread | None = None
+        self.workspace_git_worker: WorkspaceGitActionWorker | None = None
         self.active_refresh_repo_id: int | None = None
         self.refresh_queue: list[int] = []
         self.refresh_all_running = False
@@ -374,9 +432,14 @@ class MainWindow(QMainWindow):
 
         self.tabs.commits_tab.commit_selected.connect(self._show_commit_in_status)
         self.tabs.commits_tab.ai_summary_requested.connect(self._describe_commit_with_ai)
+        self.tabs.commits_tab.workspace_requested.connect(self._open_commit_in_workspace)
         self.tabs.commits_tab.commit_lookup_requested.connect(self._lookup_commit_from_history)
         self.tabs.workspace_tab.stage_requested.connect(self._stage_workspace_file)
+        self.tabs.workspace_tab.stage_all_requested.connect(self._stage_all_workspace_files)
+        self.tabs.workspace_tab.commit_requested.connect(self._commit_workspace_changes)
+        self.tabs.workspace_tab.push_requested.connect(self._push_workspace_branch)
         self.tabs.workspace_tab.open_requested.connect(self._open_repository_file)
+        self.tabs.workspace_tab.working_tree_requested.connect(self._refresh_working_tree)
         self.tabs.project_map_tab.open_requested.connect(self._open_repository_file)
         self.tabs.project_map_tab.rebuild_requested.connect(self._refresh_map)
 
@@ -811,7 +874,17 @@ class MainWindow(QMainWindow):
         self.tabs.commits_tab.set_commits(result.commits)
         if result.project_map is not None:
             self.tabs.project_map_tab.set_project_map(result.project_map)
-        self.tabs.workspace_tab.set_workspace_data(result.workspace_files, result.workspace_diffs)
+        if self.current_repo and self.current_repo.source_type == "local":
+            self.tabs.workspace_tab.set_working_tree_data(
+                result.workspace_files,
+                result.workspace_diffs,
+                message=result.working_tree_message,
+                can_write=True,
+            )
+        elif result.commits:
+            self._load_commit_in_workspace(result.commits[0].hash)
+        else:
+            self.tabs.workspace_tab.clear()
 
     @Slot(int, str)
     def _on_refresh_failed(self, repo_id: int, error: str) -> None:
@@ -1150,6 +1223,39 @@ class MainWindow(QMainWindow):
             self.map_thread.deleteLater()
             self.map_thread = None
 
+    def _load_commit_in_workspace(self, commit_hash: str) -> bool:
+        if not self.current_repo:
+            return False
+        repo_path = Path(self.current_repo.working_path)
+        try:
+            commits = ListCommitsUseCase(self.git_backend).execute(repo_path, limit=1, revision=commit_hash)
+            commit_message = commits[0].message if commits else ""
+            files, diffs, before, after, parent_hash = _build_commit_workspace_payload(
+                self.git_backend,
+                repo_path,
+                commit_hash,
+            )
+        except Exception as error:  # noqa: BLE001
+            self.status.showMessage(f"Commit files unavailable: {error}", 6_000)
+            return False
+
+        self.tabs.workspace_tab.set_commit_data(
+            commit_hash=commit_hash,
+            commit_message=commit_message,
+            files=files,
+            diff_by_file=diffs,
+            before_by_file=before,
+            after_by_file=after,
+            parent_hash=parent_hash,
+            can_browse_working_tree=self.current_repo.source_type == "local",
+        )
+        return True
+
+    def _open_commit_in_workspace(self, commit_hash: str) -> None:
+        if self._load_commit_in_workspace(commit_hash):
+            self.tabs.setCurrentWidget(self.tabs.workspace_tab)
+            self.status.showMessage(f"Opened commit in workspace: {commit_hash[:10]}", 4_000)
+
     def _refresh_working_tree(self) -> None:
         if not self.current_repo:
             return
@@ -1170,10 +1276,20 @@ class MainWindow(QMainWindow):
             report = None
         files_payload = self._build_workspace_files_payload(file_rows, report.issues if report else [], report.tests if report else None)
         diff_by_file = {
-            file_row["path"]: self.git_backend.read_working_tree_diff(repo_path, file_row["path"])
+            file_row["path"]: _read_working_tree_diff_for_row(self.git_backend, repo_path, file_row)
             for file_row in file_rows
         }
-        self.tabs.workspace_tab.set_workspace_data(files_payload, diff_by_file)
+        self.tabs.workspace_tab.set_working_tree_data(
+            files_payload,
+            diff_by_file,
+            message=(
+                f"Working tree: files={report.metrics.files_changed} "
+                f"+{report.metrics.lines_added} -{report.metrics.lines_deleted}"
+            )
+            if report
+            else None,
+            can_write=self.current_repo.source_type == "local",
+        )
         if not report:
             return
         self.status.showMessage(
@@ -1213,10 +1329,113 @@ class MainWindow(QMainWindow):
     def _stage_workspace_file(self, file_path: str) -> None:
         if not self.current_repo:
             return
+        if self.current_repo.source_type != "local":
+            self.status.showMessage("Commit actions are available for local repositories.", 4_000)
+            return
         repo_path = Path(self.current_repo.working_path)
-        self.git_backend.stage_paths(repo_path, [file_path])
+        try:
+            self.git_backend.stage_paths(repo_path, [file_path])
+        except Exception as error:  # noqa: BLE001
+            self.status.showMessage(f"Stage failed: {error}", 6_000)
+            return
         self.status.showMessage(f"Staged: {file_path}", 4_000)
-        self._refresh_current()
+        self._refresh_working_tree()
+
+    def _stage_all_workspace_files(self) -> None:
+        if not self.current_repo:
+            return
+        if self.current_repo.source_type != "local":
+            self.status.showMessage("Commit actions are available for local repositories.", 4_000)
+            return
+        repo_path = Path(self.current_repo.working_path)
+        try:
+            self.git_backend.stage_paths(repo_path)
+        except Exception as error:  # noqa: BLE001
+            self.status.showMessage(f"Stage failed: {error}", 6_000)
+            return
+        self.status.showMessage("Staged all workspace changes.", 4_000)
+        self._refresh_working_tree()
+
+    def _commit_workspace_changes(self, message: str, push: bool) -> None:
+        message = message.strip()
+        if not self.current_repo:
+            return
+        if self.current_repo.source_type != "local":
+            self.status.showMessage("Commit actions are available for local repositories.", 4_000)
+            return
+        if not message:
+            self.tabs.workspace_tab.set_action_status("Введите сообщение коммита.")
+            return
+        self._start_workspace_git_action("commit", message=message, push_after_commit=push)
+
+    def _push_workspace_branch(self) -> None:
+        if not self.current_repo:
+            return
+        if self.current_repo.source_type != "local":
+            self.status.showMessage("Push is available for local repositories.", 4_000)
+            return
+        self._start_workspace_git_action("push")
+
+    def _start_workspace_git_action(
+        self,
+        action: str,
+        message: str = "",
+        push_after_commit: bool = False,
+    ) -> None:
+        if not self.current_repo:
+            return
+        if self.workspace_git_thread is not None and self.workspace_git_thread.isRunning():
+            self.status.showMessage("Workspace git action is already running.", 4_000)
+            return
+
+        repo_id = self.current_repo.repo_id
+        repo_path = Path(self.current_repo.working_path)
+        label = "Commit" if action == "commit" else "Push"
+        self.status.showMessage(f"{label} started.", 4_000)
+        self.tabs.workspace_tab.set_action_status(f"{label} started...")
+
+        self.workspace_git_thread = QThread(self)
+        self.workspace_git_worker = WorkspaceGitActionWorker(
+            repo_id=repo_id,
+            repo_path=repo_path,
+            git_backend=self.git_backend,
+            action=action,
+            message=message,
+            push_after_commit=push_after_commit,
+        )
+        self.workspace_git_worker.moveToThread(self.workspace_git_thread)
+        self.workspace_git_thread.started.connect(self.workspace_git_worker.run)
+        self.workspace_git_worker.finished.connect(self._on_workspace_git_action_finished)
+        self.workspace_git_worker.failed.connect(self._on_workspace_git_action_failed)
+        self.workspace_git_worker.finished.connect(self.workspace_git_thread.quit)
+        self.workspace_git_worker.failed.connect(self.workspace_git_thread.quit)
+        self.workspace_git_thread.finished.connect(self._cleanup_workspace_git_worker)
+        self.workspace_git_thread.start()
+
+    @Slot(object)
+    def _on_workspace_git_action_finished(self, result: WorkspaceGitActionResult) -> None:
+        self._load_repositories()
+        self._sync_current_repo()
+        if self.current_repo and self.current_repo.repo_id == result.repo_id:
+            self.status.showMessage(result.message, 5_000)
+            self.tabs.workspace_tab.set_action_status(result.message)
+            self._refresh_commits()
+            self._refresh_working_tree()
+
+    @Slot(int, str)
+    def _on_workspace_git_action_failed(self, repo_id: int, error: str) -> None:
+        if self.current_repo and self.current_repo.repo_id == repo_id:
+            self.tabs.workspace_tab.set_action_status(f"Git action failed: {error}")
+        self.status.showMessage(f"Git action failed: {error}", 8_000)
+
+    @Slot()
+    def _cleanup_workspace_git_worker(self) -> None:
+        if self.workspace_git_worker:
+            self.workspace_git_worker.deleteLater()
+            self.workspace_git_worker = None
+        if self.workspace_git_thread:
+            self.workspace_git_thread.deleteLater()
+            self.workspace_git_thread = None
 
     def _open_repository_file(self, file_path: str) -> None:
         if not self.current_repo:
@@ -1301,6 +1520,77 @@ class MainWindow(QMainWindow):
 
     def _show_commit_in_status(self, commit_hash: str) -> None:
         self.status.showMessage(f"Selected commit: {commit_hash}", 4_000)
+
+
+def _build_commit_workspace_payload(
+    git_backend: GitBackend,
+    repo_path: Path,
+    commit_hash: str,
+) -> tuple[list[dict[str, object]], dict[str, str], dict[str, str], dict[str, str], str | None]:
+    status_rows = git_backend.read_commit_file_statuses(repo_path, commit_hash)
+    changes = git_backend.read_commit_file_changes(repo_path, commit_hash)
+    changes_by_path = {change.path: change for change in changes}
+    parent_hash = git_backend.first_parent(repo_path, commit_hash)
+
+    files: list[dict[str, object]] = []
+    diffs: dict[str, str] = {}
+    before: dict[str, str] = {}
+    after: dict[str, str] = {}
+
+    for row in status_rows:
+        path = row["path"]
+        old_path = row.get("old_path") or ""
+        change = changes_by_path.get(path) or changes_by_path.get(old_path)
+        file_payload: dict[str, object] = {
+            "path": path,
+            "status": row.get("status") or "M",
+            "additions": change.additions if change else 0,
+            "deletions": change.deletions if change else 0,
+        }
+        if old_path and old_path != path:
+            file_payload["oldPath"] = old_path
+        files.append(file_payload)
+
+        diffs[path] = git_backend.read_commit_file_diff(repo_path, commit_hash, path)
+        after[path] = _trim_workspace_text(git_backend.read_file_at_ref(repo_path, commit_hash, path))
+        if parent_hash:
+            before_path = old_path or path
+            before[path] = _trim_workspace_text(git_backend.read_file_at_ref(repo_path, parent_hash, before_path))
+
+    return files, diffs, before, after, parent_hash
+
+
+def _read_working_tree_diff_for_row(
+    git_backend: GitBackend,
+    repo_path: Path,
+    file_row: dict[str, str],
+) -> str:
+    path = file_row["path"]
+    if file_row.get("status") == "??":
+        return _build_untracked_file_diff(git_backend, repo_path, path)
+    return git_backend.read_working_tree_diff(repo_path, path)
+
+
+def _build_untracked_file_diff(git_backend: GitBackend, repo_path: Path, file_path: str) -> str:
+    content = git_backend.read_working_tree_file(repo_path, file_path)
+    lines = content.splitlines()
+    additions = "\n".join(f"+{line}" for line in lines)
+    return "\n".join(
+        [
+            f"diff --git a/{file_path} b/{file_path}",
+            "new file mode 100644",
+            "--- /dev/null",
+            f"+++ b/{file_path}",
+            f"@@ -0,0 +1,{len(lines)} @@",
+            additions,
+        ]
+    )
+
+
+def _trim_workspace_text(text: str) -> str:
+    if len(text) <= WORKSPACE_TEXT_LIMIT:
+        return text
+    return f"{text[:WORKSPACE_TEXT_LIMIT]}\n\n... truncated in workspace preview ..."
 
 
 def _snapshot_payload_from_result(result: RepositoryRefreshResult) -> dict:

@@ -19,4 +19,4 @@ class ReportTabs(QTabWidget):
         self.addTab(self.overview_tab, "Обзор")
         self.addTab(self.commits_tab, "История")
         self.addTab(self.project_map_tab, "Карта")
-        self.addTab(self.workspace_tab, "WS")
+        self.addTab(self.workspace_tab, "Рабочее пространство")

@@ -72,6 +72,25 @@ class GitBackend:
         output = self._git(["show", "--numstat", "--format=", commit_hash], repo_path)
         return self._parse_numstat(output)
 
+    def read_commit_file_statuses(self, repo_path: Path, commit_hash: str) -> list[dict[str, str]]:
+        output = self._git(
+            ["show", "--name-status", "--format=", "--find-renames", "--find-copies", commit_hash],
+            repo_path,
+        )
+        return self._parse_name_status(output)
+
+    def read_commit_file_diff(self, repo_path: Path, commit_hash: str, file_path: str) -> str:
+        return self._git(
+            ["show", "--format=", "--find-renames", "--find-copies", commit_hash, "--", file_path],
+            repo_path,
+        )
+
+    def first_parent(self, repo_path: Path, commit_hash: str) -> str | None:
+        try:
+            return self._git(["rev-parse", "--verify", f"{commit_hash}^"], repo_path)
+        except subprocess.CalledProcessError:
+            return None
+
     def read_working_tree_diff(self, repo_path: Path, file_path: str | None = None) -> str:
         args = ["diff", "HEAD"]
         if file_path:
@@ -131,11 +150,14 @@ class GitBackend:
 
 
 
-    def read_file_at_commit(self, repo_path: Path, commit_hash: str, file_path: str) -> str:
+    def read_file_at_ref(self, repo_path: Path, ref: str, file_path: str) -> str:
         try:
-            return self._git(["show", f"{commit_hash}:{file_path}"], repo_path)
+            return self._git(["show", f"{ref}:{file_path}"], repo_path)
         except subprocess.CalledProcessError:
             return ""
+
+    def read_file_at_commit(self, repo_path: Path, commit_hash: str, file_path: str) -> str:
+        return self.read_file_at_ref(repo_path, commit_hash, file_path)
 
     def read_working_tree_file(self, repo_path: Path, file_path: str) -> str:
         path = repo_path / file_path
@@ -164,6 +186,25 @@ class GitBackend:
             deletions = int(del_raw) if del_raw.isdigit() else 0
             changes.append(FileChange(path=path, additions=additions, deletions=deletions))
         return changes
+
+    def _parse_name_status(self, output: str) -> list[dict[str, str]]:
+        rows: list[dict[str, str]] = []
+        for row in output.splitlines():
+            parts = row.split("\t")
+            if len(parts) < 2:
+                continue
+            raw_status = parts[0].strip()
+            status = raw_status[:1] or "M"
+            old_path = ""
+            if status in {"R", "C"} and len(parts) >= 3:
+                old_path = parts[1]
+                path = parts[2]
+            else:
+                path = parts[1]
+            if not path:
+                continue
+            rows.append({"status": status, "raw_status": raw_status, "path": path, "old_path": old_path})
+        return rows
 
     def _git(self, args: list[str], cwd: Path) -> str:
         command = ["git", *args]

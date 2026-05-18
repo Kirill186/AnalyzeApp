@@ -4,57 +4,117 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
 <style>
-:root{color-scheme:dark;--bg:#070d19;--panel:#101b33;--stroke:#2a436f;--accent:#74a8ff;--text:#eaf1ff;--muted:#9bb1d7;--add:#143c2a;--del:#4a1e2b}
+:root{
+  color-scheme:dark;
+  --bg:#08101c;
+  --panel:#101826;
+  --panel-2:#0b1422;
+  --stroke:#2d3c52;
+  --accent:#7fb2ff;
+  --green:#5fd19c;
+  --amber:#e4b45b;
+  --red:#ef798a;
+  --text:#edf3fb;
+  --muted:#95a4b9;
+  --add:#113723;
+  --del:#44202a;
+}
 html,body{height:100%;margin:0}
 *{box-sizing:border-box}
-body{font-family:Inter,Segoe UI,sans-serif;background:radial-gradient(1200px 800px at 18% 5%, #16346a, #081021 52%, #04070d);color:var(--text);padding:10px}
-.layout{display:grid;grid-template-columns:330px minmax(0,1fr);gap:10px;height:100%}
-.panel{display:flex;flex-direction:column;min-height:0;border:1px solid var(--stroke);border-radius:14px;background:linear-gradient(170deg, rgba(19,31,58,.85), rgba(10,16,31,.9));padding:10px}
-.title{margin:0 0 8px;font-size:13px;font-weight:700}
-.toolbar{display:flex;gap:8px;align-items:center;margin-bottom:8px}
-button{border:1px solid #446ca8;background:#1a3057;color:#dce9ff;border-radius:10px;padding:7px 10px;font-size:12px;cursor:pointer}
-button.active{border-color:#8cb7ff;background:#23477f}
-button:disabled{opacity:.45;cursor:not-allowed}
-.file-list{overflow:auto;border:1px solid #20365c;border-radius:10px;background:rgba(8,14,25,.75)}
-.file{padding:8px 10px;border-bottom:1px solid #1a2e52;cursor:pointer}
+body{font-family:Inter,Segoe UI,sans-serif;background:var(--bg);color:var(--text);padding:10px}
+.layout{display:grid;grid-template-columns:340px minmax(0,1fr);gap:10px;height:100%}
+.panel{display:flex;flex-direction:column;min-height:0;border:1px solid var(--stroke);border-radius:8px;background:var(--panel)}
+.side-head,.main-head{padding:12px;border-bottom:1px solid var(--stroke)}
+.title{margin:0;font-size:15px;line-height:1.25;font-weight:800}
+.subtitle{margin:5px 0 0;color:var(--muted);font-size:12px;line-height:1.35;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.file-list{overflow:auto;min-height:0;background:var(--panel-2)}
+.file{padding:9px 10px;border-bottom:1px solid #1c293a;cursor:pointer}
 .file:last-child{border-bottom:0}
-.file:hover{background:rgba(116,168,255,.1)}
-.file.selected{background:rgba(116,168,255,.2);box-shadow:inset 0 0 0 1px #6ea6ff}
+.file:hover{background:#122033}
+.file.selected{background:#172a44;box-shadow:inset 3px 0 0 var(--accent)}
 .row{display:flex;justify-content:space-between;gap:8px;align-items:center}
-.path{font-family:ui-monospace,monospace;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.status{font-size:11px;color:#d2e1ff;background:#1d3459;border:1px solid #3f629d;border-radius:999px;padding:2px 8px}
-.ind{display:flex;gap:6px;margin-top:6px;flex-wrap:wrap}
-.pill{font-size:10px;padding:2px 7px;border-radius:999px;border:1px solid #3a5f99;color:#b9d4ff;background:#172c4f}
-.pill.warn{border-color:#a67d47;background:#43321b;color:#f8d59d}
-.pill.bad{border-color:#9e4568;background:#472131;color:#ffd1e0}
-.empty{padding:12px;color:var(--muted)}
-.loader{display:inline-block;width:18px;height:18px;border:3px solid rgba(234,241,255,.22);border-top-color:var(--accent);border-radius:50%;animation:spin .8s linear infinite;vertical-align:middle;margin-right:8px}
+.path{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.old-path{margin-top:4px;color:var(--muted);font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.status{flex:0 0 auto;font-size:11px;color:#dce9ff;background:#1a2d47;border:1px solid #45658e;border-radius:999px;padding:2px 7px}
+.status.A{border-color:#3f8769;background:#143326;color:#bff4d9}
+.status.D{border-color:#914958;background:#3a1d26;color:#ffd3db}
+.status.R,.status.C,.status.unknown{border-color:#99753f;background:#372817;color:#ffe0a8}
+.ind{display:flex;gap:6px;margin-top:7px;flex-wrap:wrap}
+.pill{font-size:10px;padding:2px 7px;border-radius:999px;border:1px solid #3c506c;color:#c4d4ea;background:#152236}
+.pill.good{border-color:#3f8769;background:#143326;color:#bff4d9}
+.pill.warn{border-color:#99753f;background:#372817;color:#ffe0a8}
+.pill.bad{border-color:#914958;background:#3a1d26;color:#ffd3db}
+.empty{padding:14px;color:var(--muted);font-size:13px;line-height:1.45}
+.loader{display:inline-block;width:18px;height:18px;border:3px solid rgba(237,243,251,.2);border-top-color:var(--accent);border-radius:50%;animation:spin .8s linear infinite;vertical-align:middle;margin-right:8px}
 @keyframes spin{to{transform:rotate(360deg)}}
-.diff-wrap{overflow:auto;border:1px solid #20365c;border-radius:10px;background:#081222;flex:1;min-height:0}
-pre{margin:0;padding:12px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;line-height:1.35}
-.line{white-space:pre}
-.add{background:rgba(20,60,42,.9)} .del{background:rgba(74,30,43,.9)} .ctx{color:#b8cae9} .hdr{color:#8fb4ff}
-table{width:100%;border-collapse:collapse;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px}
+.toolbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:10px}
+.seg{display:flex;border:1px solid var(--stroke);border-radius:8px;overflow:hidden}
+button{border:1px solid #40536d;background:#172337;color:#e6eef8;border-radius:8px;padding:7px 10px;font-size:12px;line-height:1;cursor:pointer}
+.seg button{border:0;border-right:1px solid var(--stroke);border-radius:0;background:#101a2a}
+.seg button:last-child{border-right:0}
+button.active{background:#234568;color:#fff}
+button.primary{border-color:#3f8769;background:#17402f}
+button.warn{border-color:#99753f;background:#3c2a12}
+button:disabled{opacity:.42;cursor:not-allowed}
+.action-row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:10px}
+.commit-box{display:flex;gap:8px;align-items:center;min-width:0;flex:1}
+input[type=text]{height:30px;min-width:220px;flex:1;border:1px solid #40536d;border-radius:8px;background:#0b1422;color:var(--text);padding:0 9px;font-size:12px}
+label{display:inline-flex;align-items:center;gap:6px;color:var(--muted);font-size:12px;white-space:nowrap}
+.status-line{margin-top:8px;color:#c4d4ea;font-size:12px;min-height:16px}
+.diff-wrap{overflow:auto;background:#07101b;flex:1;min-height:0}
+pre{margin:0;padding:12px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;line-height:1.4}
+.plain{white-space:pre}
+.line{white-space:pre;min-height:17px}
+.add{background:rgba(17,55,35,.95)} .del{background:rgba(68,32,42,.95)} .ctx{color:#c8d6e8} .hdr{color:#8fbfff}
+table{width:100%;border-collapse:collapse;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;line-height:1.4}
 td{vertical-align:top;padding:0}
-.ln{width:52px;text-align:right;color:#7d9ac8;padding:0 8px;border-right:1px solid #22395f;user-select:none}
+.ln{width:52px;text-align:right;color:#788ca7;padding:0 8px;border-right:1px solid #1f3044;user-select:none}
 .cell{padding:0 8px;white-space:pre}
-.split tr{border-bottom:1px solid #10213d}
-.split .l{border-right:1px solid #22395f}
+.split tr{border-bottom:1px solid #0f1d2f}
+.split .l{border-right:1px solid #1f3044}
+@media (max-width:900px){
+  body{padding:8px}
+  .layout{grid-template-columns:1fr;grid-template-rows:minmax(190px,38%) minmax(0,1fr)}
+  .subtitle{white-space:normal}
+}
 </style>
 </head>
 <body>
 <div class="layout">
   <section class="panel">
-    <h3 class="title">Измененные файлы</h3>
+    <div class="side-head">
+      <h3 id="sideTitle" class="title"></h3>
+      <div id="sideSubtitle" class="subtitle"></div>
+    </div>
     <div id="files" class="file-list"></div>
   </section>
   <section class="panel">
-    <h3 id="header" class="title">Diff</h3>
-    <div class="toolbar">
-      <button id="splitBtn">Split</button>
-      <button id="unifiedBtn">Unified</button>
-      <button id="stageBtn">Stage file</button>
-      <button id="openBtn">Open in editor</button>
+    <div class="main-head">
+      <h3 id="header" class="title">Diff</h3>
+      <div class="toolbar">
+        <div class="seg" aria-label="Вид файла">
+          <button id="diffViewBtn">Diff</button>
+          <button id="beforeViewBtn">До</button>
+          <button id="afterViewBtn">После</button>
+        </div>
+        <div class="seg" aria-label="Формат diff">
+          <button id="splitBtn">Split</button>
+          <button id="unifiedBtn">Unified</button>
+        </div>
+        <button id="workingTreeBtn">Рабочее дерево</button>
+        <button id="stageBtn">Stage file</button>
+        <button id="stageAllBtn">Stage all</button>
+        <button id="openBtn">Open</button>
+      </div>
+      <div id="localActions" class="action-row">
+        <div class="commit-box">
+          <input id="commitMessage" type="text" autocomplete="off" placeholder="Сообщение коммита" />
+          <label><input id="pushAfterCommit" type="checkbox" /> push</label>
+        </div>
+        <button id="commitBtn" class="primary">Commit</button>
+        <button id="pushBtn" class="warn">Push</button>
+      </div>
+      <div id="statusLine" class="status-line"></div>
     </div>
     <div id="diff" class="diff-wrap"></div>
   </section>
@@ -65,49 +125,69 @@ const files = Array.isArray(data.files) ? data.files : [];
 const loading = Boolean(data.loading);
 let selected = data.selectedFile || (files[0] ? files[0].path : null);
 let mode = data.mode === 'unified' ? 'unified' : 'split';
+let view = ['diff', 'before', 'after'].includes(data.view) ? data.view : 'diff';
 const diffText = data.diffText || '';
+const beforeText = data.beforeText || '';
+const afterText = data.afterText || '';
 
-const esc = (t='') => t.replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;');
-const enc = encodeURIComponent;
+const esc = (t='') => String(t).replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;');
 
-function send(action, extra=''){
-  const file = selected ? `file=${enc(selected)}` : '';
-  const base = `action=${action}`;
-  const q = [base, file, extra].filter(Boolean).join('&');
-  window.location.href = `analyzeapp://workspace?${q}`;
+function send(action, extra={}){
+  const params = new URLSearchParams();
+  params.set('action', action);
+  if(selected) params.set('file', selected);
+  for(const [key, value] of Object.entries(extra)){
+    if(value !== undefined && value !== null) params.set(key, String(value));
+  }
+  window.location.href = `analyzeapp://workspace?${params.toString()}`;
+}
+
+function shortStatus(status='M'){
+  if(String(status) === '??') return '??';
+  const map = {A:'A', M:'M', D:'D', R:'R', C:'C', '?':'?', U:'U'};
+  return map[String(status).slice(0,1)] || String(status || 'M');
 }
 
 function renderFiles(){
+  document.getElementById('sideTitle').textContent = data.title || 'Рабочее пространство';
+  document.getElementById('sideSubtitle').textContent = data.subtitle || '';
   const root = document.getElementById('files');
   if(loading){
-    root.innerHTML = '<div class="empty"><span class="loader"></span>Analysis is running...</div>';
+    root.innerHTML = '<div class="empty"><span class="loader"></span>Загружаю рабочее пространство...</div>';
     return;
   }
   if(!files.length){
-    root.innerHTML = '<div class="empty">Рабочее дерево чистое.</div>';
+    const message = data.source === 'working_tree'
+      ? 'Рабочее дерево чистое.'
+      : 'В этом коммите не найдено измененных файлов.';
+    root.innerHTML = `<div class="empty">${message}</div>`;
     return;
   }
   root.innerHTML = files.map((f) => {
-    const sel = f.path === selected ? 'selected' : '';
+    const path = String(f.path || '');
+    const sel = path === selected ? 'selected' : '';
+    const status = shortStatus(f.status || 'M');
+    const statusClass = status === '??' ? 'unknown' : status;
     const indicators = [];
+    if(Number.isFinite(Number(f.additions)) || Number.isFinite(Number(f.deletions))){
+      indicators.push(`<span class="pill good">+${Number(f.additions || 0)}</span>`);
+      indicators.push(`<span class="pill bad">-${Number(f.deletions || 0)}</span>`);
+    }
     if(typeof f.lint === 'number') indicators.push(`<span class="pill ${f.lint>0?'warn':''}">lint: ${f.lint}</span>`);
     if(typeof f.issues === 'number') indicators.push(`<span class="pill ${f.issues>0?'bad':''}">issues: ${f.issues}</span>`);
     if(typeof f.tests === 'string' && f.tests) indicators.push(`<span class="pill">${esc(f.tests)}</span>`);
-    return `<div class="file ${sel}" data-path="${enc(f.path)}">
-      <div class="row"><span class="path">${esc(f.path)}</span><span class="status">${esc(f.status || 'M')}</span></div>
+    const rename = f.oldPath ? `<div class="old-path">${esc(f.oldPath)} -></div>` : '';
+    return `<div class="file ${sel}" data-path="${encodeURIComponent(path)}">
+      <div class="row"><span class="path">${esc(path)}</span><span class="status ${statusClass}">${esc(status)}</span></div>
+      ${rename}
       <div class="ind">${indicators.join('')}</div>
     </div>`;
   }).join('');
 }
 
-function pick(path){
-  selected = path;
-  send('select');
-}
-
 function parseUnified(text){
   const rows = [];
-  const lines = text.split('\n');
+  const lines = String(text || '').split('\n');
   let oldLn = 0, newLn = 0;
   for(const raw of lines){
     if(raw.startsWith('@@')){
@@ -116,7 +196,7 @@ function parseUnified(text){
       rows.push({kind:'hdr', leftLn:'', rightLn:'', left:raw, right:raw});
       continue;
     }
-    if(raw.startsWith('---') || raw.startsWith('+++') || raw.startsWith('diff --git') || raw.startsWith('index ')){
+    if(raw.startsWith('---') || raw.startsWith('+++') || raw.startsWith('diff --git') || raw.startsWith('index ') || raw.startsWith('new file') || raw.startsWith('deleted file') || raw.startsWith('similarity index') || raw.startsWith('rename ')){
       rows.push({kind:'hdr', leftLn:'', rightLn:'', left:raw, right:raw});
       continue;
     }
@@ -149,16 +229,30 @@ function renderSplit(rows){
     </tr>`).join('')}</tbody></table>`;
 }
 
-function renderDiff(){
+function renderContent(){
   const root = document.getElementById('diff');
   const hdr = document.getElementById('header');
-  hdr.textContent = selected ? `Diff • ${selected}` : 'Diff';
+  const suffix = selected ? ` · ${selected}` : '';
+  hdr.textContent = view === 'before' ? `Файл до${suffix}` : view === 'after' ? `Файл после${suffix}` : `Diff${suffix}`;
   if(loading){
-    root.innerHTML = '<div class="empty"><span class="loader"></span>Checks are still running.</div>';
+    root.innerHTML = '<div class="empty"><span class="loader"></span>Данные еще загружаются.</div>';
     return;
   }
-  if(!selected || !diffText){
-    root.innerHTML = '<div class="empty">Выберите файл для просмотра diff.</div>';
+  if(!selected){
+    root.innerHTML = '<div class="empty">Выберите файл слева.</div>';
+    return;
+  }
+  if(view === 'before' || view === 'after'){
+    const text = view === 'before' ? beforeText : afterText;
+    if(!text){
+      root.innerHTML = '<div class="empty">Содержимое файла для этого состояния недоступно.</div>';
+      return;
+    }
+    root.innerHTML = `<pre class="plain">${esc(text)}</pre>`;
+    return;
+  }
+  if(!diffText){
+    root.innerHTML = '<div class="empty">Diff для выбранного файла пуст или недоступен.</div>';
     return;
   }
   const rows = parseUnified(diffText);
@@ -166,27 +260,69 @@ function renderDiff(){
 }
 
 function bindToolbar(){
-  const splitBtn = document.getElementById('splitBtn');
-  const unifiedBtn = document.getElementById('unifiedBtn');
-  splitBtn.classList.toggle('active', mode === 'split');
-  unifiedBtn.classList.toggle('active', mode === 'unified');
-  splitBtn.onclick = () => { mode = 'split'; send('mode', 'value=split'); };
-  unifiedBtn.onclick = () => { mode = 'unified'; send('mode', 'value=unified'); };
+  const canStage = Boolean(data.canStage) && Boolean(selected) && data.source === 'working_tree';
+  const canOpen = Boolean(data.canOpen) && Boolean(selected);
+  const canCommit = Boolean(data.canCommit);
+  const canPush = Boolean(data.canPush);
+  const hasBefore = Boolean(beforeText);
+  const hasAfter = Boolean(afterText);
+
+  for(const item of [
+    ['diffViewBtn', 'diff'],
+    ['beforeViewBtn', 'before'],
+    ['afterViewBtn', 'after'],
+  ]){
+    const [id, target] = item;
+    const button = document.getElementById(id);
+    button.classList.toggle('active', view === target);
+    button.disabled = target === 'before' ? !hasBefore : target === 'after' ? !hasAfter : false;
+    button.onclick = () => send('view', {view: target});
+  }
+
+  document.getElementById('splitBtn').classList.toggle('active', mode === 'split');
+  document.getElementById('unifiedBtn').classList.toggle('active', mode === 'unified');
+  document.getElementById('splitBtn').disabled = view !== 'diff';
+  document.getElementById('unifiedBtn').disabled = view !== 'diff';
+  document.getElementById('splitBtn').onclick = () => send('mode', {value:'split'});
+  document.getElementById('unifiedBtn').onclick = () => send('mode', {value:'unified'});
+
+  document.getElementById('workingTreeBtn').style.display = data.canBrowseWorkingTree ? '' : 'none';
+  document.getElementById('workingTreeBtn').onclick = () => send('working_tree');
+  document.getElementById('stageBtn').disabled = loading || !canStage;
+  document.getElementById('stageAllBtn').disabled = loading || !canCommit;
+  document.getElementById('openBtn').disabled = loading || !canOpen;
   document.getElementById('stageBtn').onclick = () => send('stage');
+  document.getElementById('stageAllBtn').onclick = () => send('stage_all');
   document.getElementById('openBtn').onclick = () => send('open');
-  document.getElementById('stageBtn').disabled = loading || !selected;
-  document.getElementById('openBtn').disabled = loading || !selected;
+
+  document.getElementById('localActions').style.display = (canCommit || canPush) ? '' : 'none';
+  document.getElementById('commitBtn').disabled = loading || !canCommit;
+  document.getElementById('pushBtn').disabled = loading || !canPush;
+  document.getElementById('commitBtn').onclick = () => {
+    const input = document.getElementById('commitMessage');
+    const message = input.value.trim();
+    if(!message){
+      document.getElementById('statusLine').textContent = 'Введите сообщение коммита.';
+      input.focus();
+      return;
+    }
+    const push = document.getElementById('pushAfterCommit').checked ? '1' : '0';
+    send('commit', {message, push});
+  };
+  document.getElementById('pushBtn').onclick = () => send('push');
+  document.getElementById('statusLine').textContent = data.actionStatus || '';
 }
 
 renderFiles();
-renderDiff();
+renderContent();
 bindToolbar();
 document.getElementById('files').addEventListener('click', (event) => {
   const row = event.target.closest('.file');
   if(!row){ return; }
   const path = decodeURIComponent(row.getAttribute('data-path') || '');
   if(!path){ return; }
-  pick(path);
+  selected = path;
+  send('select');
 });
 </script>
 </body>

@@ -272,6 +272,10 @@ function askAi(hash) {
   window.location.href = `analyzeapp://ai/${hash}`;
 }
 
+function openWorkspace(hash) {
+  window.location.href = `analyzeapp://workspace/${hash}`;
+}
+
 function selectCommit(hash, notify = true) {
   if (!indexByHash.has(hash)) return;
   selected = hash;
@@ -493,6 +497,7 @@ function paintDetails() {
     <div class="desc">${description}</div>
     <div class="action-bar">
       <button ${commit.descriptionLoading ? 'disabled' : ''} onclick="askAi('${commit.hash}')">${buttonLabel}</button>
+      <button onclick="openWorkspace('${commit.hash}')">В рабочее пространство</button>
     </div>`;
 }
 

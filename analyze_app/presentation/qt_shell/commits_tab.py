@@ -14,6 +14,7 @@ from analyze_app.presentation.qt_shell.web_view_utils import render_html_templat
 class CommitsWebPage(QWebEnginePage):
     commit_selected = Signal(str)
     ai_requested = Signal(str)
+    workspace_requested = Signal(str)
     lookup_requested = Signal(str)
 
     def acceptNavigationRequest(self, url: QUrl, nav_type, is_main_frame: bool) -> bool:  # type: ignore[override]
@@ -24,6 +25,8 @@ class CommitsWebPage(QWebEnginePage):
                 self.commit_selected.emit(commit_hash)
             elif action == "ai" and commit_hash:
                 self.ai_requested.emit(commit_hash)
+            elif action == "workspace" and commit_hash:
+                self.workspace_requested.emit(commit_hash)
             elif action == "lookup" and commit_hash:
                 self.lookup_requested.emit(commit_hash)
             return False
@@ -33,6 +36,7 @@ class CommitsWebPage(QWebEnginePage):
 class CommitsTab(QWidget):
     commit_selected = Signal(str)
     ai_summary_requested = Signal(str)
+    workspace_requested = Signal(str)
     commit_lookup_requested = Signal(str)
 
     def __init__(self, parent=None) -> None:
@@ -47,6 +51,7 @@ class CommitsTab(QWidget):
         self.page = CommitsWebPage(self.web)
         self.page.commit_selected.connect(self._set_selected_hash)
         self.page.ai_requested.connect(self._on_ai_requested_from_web)
+        self.page.workspace_requested.connect(self._on_workspace_requested_from_web)
         self.page.lookup_requested.connect(self.commit_lookup_requested)
         self.web.setPage(self.page)
 
@@ -99,6 +104,10 @@ class CommitsTab(QWidget):
     def _on_ai_requested_from_web(self, commit_hash: str) -> None:
         self._set_selected_hash(commit_hash)
         self.ai_summary_requested.emit(commit_hash)
+
+    def _on_workspace_requested_from_web(self, commit_hash: str) -> None:
+        self._set_selected_hash(commit_hash)
+        self.workspace_requested.emit(commit_hash)
 
     def _render(self) -> None:
         serialized = []
