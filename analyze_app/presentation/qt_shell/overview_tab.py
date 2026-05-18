@@ -7,6 +7,7 @@ from PySide6.QtWebEngineCore import QWebEnginePage
 from PySide6.QtWebEngineWidgets import QWebEngineView
 from PySide6.QtWidgets import QHBoxLayout, QPushButton, QVBoxLayout, QWidget
 
+from analyze_app.presentation.qt_shell.readme_finder import find_readme_candidates
 from analyze_app.presentation.qt_shell.web_view_utils import markdown_to_html, render_html_template
 
 
@@ -136,7 +137,7 @@ class OverviewTab(QWidget):
             return
 
     def load_readme(self, repo_path: Path) -> None:
-        candidates = _find_readme_candidates(repo_path)
+        candidates = find_readme_candidates(repo_path)
         if candidates:
             candidate = candidates[0]
             content = candidate.read_text(encoding="utf-8", errors="ignore")
@@ -149,38 +150,3 @@ class OverviewTab(QWidget):
         template_path = Path(__file__).with_name("web_assets") / "overview.html"
         html = render_html_template(template_path, self._state)
         self.web.setHtml(html, QUrl.fromLocalFile(str(template_path.parent)))
-
-
-def _find_readme_candidates(repo_path: Path) -> list[Path]:
-    if not repo_path.exists() or not repo_path.is_dir():
-        return []
-
-    def is_readme(path: Path) -> bool:
-        return path.is_file() and path.name.lower().startswith("readme")
-
-    preferred_suffix_order = {".md": 0, ".markdown": 1, ".rst": 2, ".txt": 3, "": 4}
-
-    root_files = [item for item in repo_path.iterdir() if is_readme(item)]
-    if root_files:
-        root_files.sort(key=lambda path: preferred_suffix_order.get(path.suffix.lower(), 9))
-        return root_files
-
-    nested_candidates: list[Path] = []
-    for path in repo_path.rglob("*"):
-        if not is_readme(path):
-            continue
-        try:
-            depth = len(path.relative_to(repo_path).parts)
-        except ValueError:
-            continue
-        if depth <= 3:
-            nested_candidates.append(path)
-
-    nested_candidates.sort(
-        key=lambda path: (
-            len(path.relative_to(repo_path).parts),
-            preferred_suffix_order.get(path.suffix.lower(), 9),
-            str(path).lower(),
-        )
-    )
-    return nested_candidates

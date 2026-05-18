@@ -4,6 +4,7 @@ import subprocess
 from pathlib import Path
 
 from analyze_app.domain.entities import Issue
+from analyze_app.infrastructure.analysis.file_selection import select_python_files
 from analyze_app.shared.process import decode_output
 
 
@@ -11,8 +12,12 @@ class VultureRunner:
     def __init__(self, min_confidence: int = 80) -> None:
         self.min_confidence = min_confidence
 
-    def run(self, repo_path: Path) -> list[Issue]:
-        command = ["vulture", ".", "--min-confidence", str(self.min_confidence)]
+    def run(self, repo_path: Path, tracked_files: list[str] | None = None) -> list[Issue]:
+        files = select_python_files(repo_path, tracked_files)
+        if not files:
+            return []
+
+        command = ["vulture", *files, "--min-confidence", str(self.min_confidence)]
         completed = subprocess.run(command, cwd=repo_path, text=False, capture_output=True)
         stdout = decode_output(completed.stdout)
         stderr = decode_output(completed.stderr)

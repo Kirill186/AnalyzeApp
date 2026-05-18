@@ -177,6 +177,7 @@ class RepositoryRefreshWorker(QObject):
             thresholds=self.thresholds,
             git_backend=self.git_backend,
             store=self.store,
+            tracked_files=tracked_files,
             on_metric_result=self._emit_metric_progress,
             on_test_result=self._emit_test_progress,
             on_tests_finished=tests_results.append,
@@ -931,7 +932,7 @@ class MainWindow(QMainWindow):
         cached_overview = self.store.load_project_overview(self.current_repo.repo_id)
         summary = cached_overview[0] if cached_overview else "Описание пока не сгенерировано. Нажмите Regenerate."
         self.tabs.overview_tab.update_project_info(self.current_repo.title, len(tracked_files), loc, summary)
-        self.tabs.overview_tab.update_metrics(self._calculate_quality_metrics(repo_path, loc))
+        self.tabs.overview_tab.update_metrics(self._calculate_quality_metrics(repo_path, loc, tracked_files))
         self.tabs.overview_tab.load_readme(repo_path)
 
     def _count_python_loc(self, repo_path: Path, tracked_files: list[str] | None = None) -> int:
@@ -944,7 +945,12 @@ class MainWindow(QMainWindow):
             loc += len(content.splitlines())
         return loc
 
-    def _calculate_quality_metrics(self, repo_path: Path, loc: int) -> dict[str, tuple[str, str, str]]:
+    def _calculate_quality_metrics(
+        self,
+        repo_path: Path,
+        loc: int,
+        tracked_files: list[str] | None = None,
+    ) -> dict[str, tuple[str, str, str]]:
         thresholds = self.state_store.quality_thresholds()
         kloc = max(loc / 1000.0, 0.001)
 
@@ -997,7 +1003,7 @@ class MainWindow(QMainWindow):
         else:
             metrics["maintainability"] = ("—", "n/a", "нет данных radon")
 
-        dead_code_issues = VultureRunner().run(repo_path)
+        dead_code_issues = VultureRunner().run(repo_path, tracked_files=tracked_files)
         dead_code_count = len([issue for issue in dead_code_issues if issue.severity in {"warning", "error"}])
         dead_code_per_kloc = dead_code_count / kloc
         dead_thr = thresholds["dead_code_findings_per_kloc"]
@@ -1007,7 +1013,7 @@ class MainWindow(QMainWindow):
             self._fmt_thresholds("<=", dead_thr),
         )
 
-        duplication = DuplicationRunner().run(repo_path)
+        duplication = DuplicationRunner().run(repo_path, tracked_files=tracked_files)
         dup_thr = thresholds["duplication_pct"]
         metrics["duplication"] = (
             self._grade_lower_better(duplication.duplication_pct, dup_thr),
@@ -1859,6 +1865,7 @@ def _calculate_quality_metrics(
     thresholds: dict[str, list[float]],
     git_backend: GitBackend,
     store: SqliteStore,
+    tracked_files: list[str] | None = None,
     tests: TestRunResult | None = None,
     on_metric_result: Callable[[str, tuple[str, str, str]], None] | None = None,
     on_test_result: Callable[[str, str], None] | None = None,
@@ -1923,7 +1930,7 @@ def _calculate_quality_metrics(
         metrics["maintainability"] = ("—", "n/a", "нет данных radon")
     publish("maintainability")
 
-    dead_code_issues = VultureRunner().run(repo_path)
+    dead_code_issues = VultureRunner().run(repo_path, tracked_files=tracked_files)
     dead_code_count = len([issue for issue in dead_code_issues if issue.severity in {"warning", "error"}])
     dead_code_per_kloc = dead_code_count / kloc
     dead_thr = thresholds["dead_code_findings_per_kloc"]
@@ -1934,7 +1941,7 @@ def _calculate_quality_metrics(
     )
     publish("dead_code")
 
-    duplication = DuplicationRunner().run(repo_path)
+    duplication = DuplicationRunner().run(repo_path, tracked_files=tracked_files)
     dup_thr = thresholds["duplication_pct"]
     metrics["duplication"] = (
         _grade_lower_better(duplication.duplication_pct, dup_thr),

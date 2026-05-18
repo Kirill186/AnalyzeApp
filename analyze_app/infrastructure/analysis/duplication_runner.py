@@ -4,6 +4,7 @@ from collections import defaultdict
 from pathlib import Path
 
 from analyze_app.domain.entities import DuplicationResult
+from analyze_app.infrastructure.analysis.file_selection import select_python_files
 
 
 class DuplicationRunner:
@@ -12,8 +13,11 @@ class DuplicationRunner:
     def __init__(self, min_lines: int = 6) -> None:
         self.min_lines = min_lines
 
-    def run(self, repo_path: Path) -> DuplicationResult:
-        files = [path for path in repo_path.rglob("*.py") if ".git" not in path.parts]
+    def run(self, repo_path: Path, tracked_files: list[str] | None = None) -> DuplicationResult:
+        files = [
+            repo_path.joinpath(*rel_path.split("/"))
+            for rel_path in select_python_files(repo_path, tracked_files)
+        ]
         normalized_by_file: dict[Path, list[str]] = {}
         total_loc = 0
 

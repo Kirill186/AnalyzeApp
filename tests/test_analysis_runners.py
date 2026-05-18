@@ -4,10 +4,12 @@ import json
 from pathlib import Path
 from types import SimpleNamespace
 
-from analyze_app.infrastructure.analysis import pytest_runner, radon_runner, ruff_runner
+from analyze_app.infrastructure.analysis import pytest_runner, radon_runner, ruff_runner, vulture_runner
+from analyze_app.infrastructure.analysis.duplication_runner import DuplicationRunner
 from analyze_app.infrastructure.analysis.pytest_runner import PytestRunner
 from analyze_app.infrastructure.analysis.radon_runner import RadonRunner
 from analyze_app.infrastructure.analysis.ruff_runner import RuffRunner
+from analyze_app.infrastructure.analysis.vulture_runner import VultureRunner
 
 
 def _completed(stdout: object, *, returncode: int = 0, stderr: str = "") -> SimpleNamespace:
@@ -83,3 +85,40 @@ def test_pytest_runner_streams_completed_tests(monkeypatch) -> None:
     assert result.passed == 1
     assert result.failed == 1
     assert "tests/test_sample.py::test_two" in result.failed_tests
+
+
+def test_vulture_runner_scans_only_selected_python_files(monkeypatch, tmp_path) -> None:
+    (tmp_path / "main.py").write_text("def used():\n    return 1\n", encoding="utf-8")
+    hidden_dir = tmp_path / ".venv"
+    hidden_dir.mkdir()
+    (hidden_dir / "vendor.py").write_text("def unused():\n    return 2\n", encoding="utf-8")
+
+    seen_command: list[str] = []
+
+    def fake_run(command, *args, **kwargs):
+        seen_command.extend(command)
+        return SimpleNamespace(returncode=0, stdout=b"", stderr=b"")
+
+    monkeypatch.setattr(vulture_runner.subprocess, "run", fake_run)
+
+    issues = VultureRunner().run(tmp_path, tracked_files=["main.py", ".venv/vendor.py", "missing.py"])
+
+    assert issues == []
+    assert seen_command[:2] == ["vulture", "main.py"]
+    assert "." not in seen_command
+    assert ".venv/vendor.py" not in seen_command
+    assert "missing.py" not in seen_command
+
+
+def test_duplication_runner_scans_only_selected_python_files(tmp_path) -> None:
+    (tmp_path / "main.py").write_text("print('hello')\n", encoding="utf-8")
+    hidden_dir = tmp_path / ".venv"
+    hidden_dir.mkdir()
+    duplicate_block = "\n".join(f"line_{index} = {index}" for index in range(6))
+    (hidden_dir / "first.py").write_text(duplicate_block, encoding="utf-8")
+    (hidden_dir / "second.py").write_text(duplicate_block, encoding="utf-8")
+
+    result = DuplicationRunner().run(tmp_path, tracked_files=["main.py"])
+
+    assert result.duplicate_groups == 0
+    assert result.duplication_pct == 0.0
