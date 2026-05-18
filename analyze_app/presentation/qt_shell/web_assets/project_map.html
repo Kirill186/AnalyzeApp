@@ -384,6 +384,7 @@
           <div class="mode-switch" role="tablist" aria-label="View mode">
             <button class="mode-btn" data-mode="structural">Structural view</button>
             <button class="mode-btn" data-mode="hotspot">Hotspot overlay</button>
+            <button class="mode-btn" data-mode="landscape">Hotspot map</button>
           </div>
           <button class="rebuild-map-btn" id="rebuildMapBtn" type="button">Построить карту</button>
         </div>
@@ -400,6 +401,7 @@
           <div class="legend-item"><span><i class="dot" style="background:var(--file)"></i> file / module</span><span class="kbd">корневые узлы</span></div>
           <div class="legend-item"><span><i class="dot" style="background:var(--class)"></i> class</span><span class="kbd">потомки file</span></div>
           <div class="legend-item"><span><i class="dot" style="background:var(--function)"></i> function</span><span class="kbd">методы и функции</span></div>
+          <div class="legend-item"><span><i class="dot" style="background:var(--hot)"></i> hotspot map</span><span class="kbd">файлы без ребер</span></div>
         </div>
       </section>
       <section class="related">
@@ -418,10 +420,49 @@
     const MODE = {
       STRUCTURAL: 'structural',
       HOTSPOT: 'hotspot',
+      LANDSCAPE: 'landscape',
     };
 
+    const HOTSPOT_MAP_NODE_THRESHOLD = 700;
+    const HOTSPOT_MAP_EDGE_THRESHOLD = 1400;
+    const GOLDEN_ANGLE = Math.PI * (3 - Math.sqrt(5));
+    const LANGUAGE_COLORS = {
+      Python: '#52c47f',
+      JavaScript: '#f2c94c',
+      TypeScript: '#6f94e8',
+      HTML: '#ec7b52',
+      CSS: '#b178dd',
+      Java: '#db6f96',
+      Kotlin: '#b06cf4',
+      Go: '#58c7d8',
+      Rust: '#d9995a',
+      C: '#8aa4c7',
+      'C++': '#7f9fe8',
+      'C#': '#78c6a3',
+      Markdown: '#9aa7bd',
+      Config: '#9bb15f',
+      Shell: '#77c0a5',
+      Other: '#b4c0d8',
+    };
+
+    function chooseInitialMode(data) {
+      const requested = String(data.mode || '').toLowerCase();
+      if (requested.includes('hotspot map') || requested.includes('landscape')) return MODE.LANDSCAPE;
+      if (requested.includes('hotspot')) return MODE.HOTSPOT;
+
+      const nodeCount = (data.nodes || []).length;
+      const edgeCount = (data.edges || []).length;
+      if (edgeCount === 0 && nodeCount >= 120) {
+        return MODE.LANDSCAPE;
+      }
+      if (nodeCount >= HOTSPOT_MAP_NODE_THRESHOLD || edgeCount >= HOTSPOT_MAP_EDGE_THRESHOLD) {
+        return MODE.LANDSCAPE;
+      }
+      return MODE.STRUCTURAL;
+    }
+
     const state = {
-      mode: payload.mode === 'Hotspot overlay' ? MODE.HOTSPOT : MODE.STRUCTURAL,
+      mode: chooseInitialMode(payload),
       nodes: (payload.nodes || []).map((node, index) => ({
         ...node,
         hotspot: Number(node.hotspot ?? 0),
@@ -433,12 +474,17 @@
         index,
       })),
       edges: payload.edges || [],
+      hotspots: [],
+      hotspotById: new Map(),
+      hotspotGroups: [],
       selectedNodeId: null,
       hoveredNodeId: null,
       camera: { x: 0, y: 0, scale: 1 },
       cameraDirty: false,
       layoutTicks: 0,
       world: { width: 0, height: 0 },
+      structuralWorld: { width: 0, height: 0 },
+      hotspotWorld: { width: 0, height: 0 },
     };
 
     const nodeById = new Map(state.nodes.map((n) => [n.id, n]));
@@ -465,6 +511,9 @@
     const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
     const enc = encodeURIComponent;
 
+    state.hotspots = buildFileHotspots(state.nodes);
+    state.hotspotById = new Map(state.hotspots.map((n) => [n.id, n]));
+
     function sendToHost(action, filePath) {
       const q = [`action=${enc(action)}`];
       if (filePath) q.push(`file=${enc(filePath)}`);
@@ -485,14 +534,116 @@
       return ((hashString(value) % 1000) / 999 - 0.5) * span;
     }
 
-    function maxHotspot() {
-      return Math.max(...state.nodes.map((n) => n.hotspot), 0);
+    function activeNodes() {
+      return state.mode === MODE.LANDSCAPE ? state.hotspots : state.nodes;
+    }
+
+    function activeNodeById() {
+      return state.mode === MODE.LANDSCAPE ? state.hotspotById : nodeById;
+    }
+
+    function setActiveWorld() {
+      state.world = state.mode === MODE.LANDSCAPE ? state.hotspotWorld : state.structuralWorld;
+    }
+
+    function maxHotspot(nodes = activeNodes()) {
+      return Math.max(...nodes.map((n) => n.hotspot), 0);
+    }
+
+    function baseName(path) {
+      const parts = String(path || '').split('/').filter(Boolean);
+      return parts.length ? parts[parts.length - 1] : String(path || 'root');
+    }
+
+    function extensionOf(path) {
+      const name = baseName(path).toLowerCase();
+      const index = name.lastIndexOf('.');
+      return index >= 0 ? name.slice(index) : name;
+    }
+
+    function languageForPath(path) {
+      const ext = extensionOf(path);
+      if (ext === '.py') return 'Python';
+      if (['.js', '.jsx', '.mjs', '.cjs'].includes(ext)) return 'JavaScript';
+      if (['.ts', '.tsx'].includes(ext)) return 'TypeScript';
+      if (['.html', '.vue', '.svelte'].includes(ext)) return 'HTML';
+      if (['.css', '.scss'].includes(ext)) return 'CSS';
+      if (ext === '.java') return 'Java';
+      if (['.kt', '.kts'].includes(ext)) return 'Kotlin';
+      if (ext === '.go') return 'Go';
+      if (ext === '.rs') return 'Rust';
+      if (ext === '.c' || ext === '.h') return 'C';
+      if (['.cpp', '.hpp', '.cc', '.cxx'].includes(ext)) return 'C++';
+      if (ext === '.cs') return 'C#';
+      if (['.md', 'readme', 'readme.md'].includes(ext)) return 'Markdown';
+      if (['.json', '.toml', '.yaml', '.yml', '.xml', '.gradle', 'dockerfile', 'makefile'].includes(ext)) return 'Config';
+      if (['.sh', '.ps1', '.bat', '.cmd'].includes(ext)) return 'Shell';
+      return 'Other';
+    }
+
+    function groupForPath(path) {
+      const parts = String(path || '').split('/').filter(Boolean);
+      if (parts.length > 1) return parts[0];
+      return 'root';
+    }
+
+    function isFileLikePath(path, kind) {
+      if (kind === 'file') return true;
+      const name = baseName(path);
+      return name.includes('.') || ['Dockerfile', 'Makefile', 'README'].includes(name);
+    }
+
+    function buildFileHotspots(nodes) {
+      const byPath = new Map();
+
+      nodes.forEach((node) => {
+        const path = String(node.path || '');
+        if (!path || !isFileLikePath(path, node.kind)) return;
+        if (!byPath.has(path)) {
+          byPath.set(path, {
+            id: `hotspot:${path}`,
+            kind: 'file-hotspot',
+            label: baseName(path),
+            path,
+            hotspot: 0,
+            nodeCount: 0,
+            symbolCount: 0,
+            language: languageForPath(path),
+            group: groupForPath(path),
+            x: 0,
+            y: 0,
+            vx: 0,
+            vy: 0,
+            radius: 8,
+          });
+        }
+
+        const item = byPath.get(path);
+        item.hotspot = Math.max(item.hotspot, Number(node.hotspot ?? 0));
+        item.nodeCount += 1;
+        if (node.kind === 'class' || node.kind === 'function') {
+          item.symbolCount += 1;
+        }
+      });
+
+      return [...byPath.values()].sort((a, b) => {
+        if (b.hotspot !== a.hotspot) return b.hotspot - a.hotspot;
+        if (b.symbolCount !== a.symbolCount) return b.symbolCount - a.symbolCount;
+        return a.path.localeCompare(b.path);
+      }).map((node, index) => ({ ...node, index }));
     }
 
     function radiusForNode(node, hotMax = maxHotspot()) {
+      if (node.kind === 'file-hotspot') return radiusForHotspot(node, hotMax);
       const baseRadius = node.kind === 'file' ? 11 : node.kind === 'class' ? 9 : 7;
       const hotspotBoost = state.mode === MODE.HOTSPOT ? clamp(node.hotspot / (hotMax || 1), 0, 1) * 5 : 0;
       return baseRadius + hotspotBoost;
+    }
+
+    function radiusForHotspot(node, hotMax = maxHotspot(state.hotspots)) {
+      const heat = hotMax <= 0 ? 0 : Math.sqrt(clamp(node.hotspot / hotMax, 0, 1));
+      const symbolWeight = clamp(Math.log2((node.symbolCount || node.nodeCount || 1) + 1) / 5, 0, 1);
+      return 7 + heat * 18 + symbolWeight * 9;
     }
 
     function clampNodeToWorld(node) {
@@ -522,6 +673,10 @@
       return getComputedStyle(document.documentElement).getPropertyValue('--function').trim();
     }
 
+    function colorForLanguage(language) {
+      return LANGUAGE_COLORS[language] || LANGUAGE_COLORS.Other;
+    }
+
     function hotspotColor(score, maxHotspot) {
       const cold = { r: 111, g: 166, b: 255 };
       const hot = { r: 255, g: 109, b: 109 };
@@ -538,9 +693,12 @@
       const spacing = 76;
       const cols = Math.max(1, Math.ceil(Math.sqrt(state.nodes.length || 1) * 1.25));
       const rows = Math.max(1, Math.ceil((state.nodes.length || 1) / cols));
-      state.world.width = Math.max(w, cols * spacing + 140);
-      state.world.height = Math.max(h, rows * spacing + 140);
-      const hotMax = maxHotspot();
+      state.structuralWorld = {
+        width: Math.max(w, cols * spacing + 140),
+        height: Math.max(h, rows * spacing + 140),
+      };
+      state.world = state.structuralWorld;
+      const hotMax = maxHotspot(state.nodes);
 
       state.nodes.forEach((node, i) => {
         const col = i % cols;
@@ -557,7 +715,89 @@
       for (let i = 0; i < warmupPasses; i += 1) {
         applyLayoutForces();
       }
+      layoutHotspotMap();
+      setActiveWorld();
       centerCamera();
+    }
+
+    function layoutHotspotMap() {
+      const w = canvas.clientWidth || 800;
+      const h = canvas.clientHeight || 500;
+      const hotMax = maxHotspot(state.hotspots);
+      const grouped = new Map();
+
+      state.hotspots.forEach((node) => {
+        node.radius = radiusForHotspot(node, hotMax);
+        if (!grouped.has(node.group)) grouped.set(node.group, []);
+        grouped.get(node.group).push(node);
+      });
+
+      const groups = [...grouped.entries()].map(([name, nodes]) => {
+        const sortedNodes = nodes.sort((a, b) => {
+          if (b.hotspot !== a.hotspot) return b.hotspot - a.hotspot;
+          if (b.symbolCount !== a.symbolCount) return b.symbolCount - a.symbolCount;
+          return a.path.localeCompare(b.path);
+        });
+        const avgRadius = sortedNodes.reduce((sum, node) => sum + node.radius, 0) / Math.max(sortedNodes.length, 1);
+        const areaRadius = Math.sqrt(sortedNodes.reduce((sum, node) => sum + Math.pow(node.radius + 8, 2), 0)) * 1.05 + 42;
+        const countRadius = Math.sqrt(sortedNodes.length) * (avgRadius + 8) + 34;
+        const totalHotspot = sortedNodes.reduce((sum, node) => sum + node.hotspot, 0);
+        return {
+          name,
+          nodes: sortedNodes,
+          avgRadius,
+          radius: Math.max(72, areaRadius, countRadius),
+          totalHotspot,
+          x: 0,
+          y: 0,
+        };
+      }).sort((a, b) => {
+        if (b.totalHotspot !== a.totalHotspot) return b.totalHotspot - a.totalHotspot;
+        if (b.nodes.length !== a.nodes.length) return b.nodes.length - a.nodes.length;
+        return a.name.localeCompare(b.name);
+      });
+
+      if (!groups.length) {
+        state.hotspotWorld = { width: w, height: h };
+        state.hotspotGroups = [];
+        return;
+      }
+
+      const aspect = w / Math.max(h, 1);
+      const cols = Math.max(1, Math.ceil(Math.sqrt(groups.length * aspect)));
+      const rows = Math.max(1, Math.ceil(groups.length / cols));
+      const maxRadius = Math.max(...groups.map((group) => group.radius), 72);
+      const cell = Math.max(180, maxRadius * 2 + 92);
+      state.hotspotWorld = {
+        width: Math.max(w, cols * cell + 100),
+        height: Math.max(h, rows * cell + 100),
+      };
+
+      groups.forEach((group, index) => {
+        const col = index % cols;
+        const row = Math.floor(index / cols);
+        group.x = 50 + cell / 2 + col * cell;
+        group.y = 50 + cell / 2 + row * cell;
+        placeHotspotGroup(group);
+      });
+      state.hotspotGroups = groups;
+    }
+
+    function placeHotspotGroup(group) {
+      const step = Math.max(14, Math.min(30, group.avgRadius + 9));
+      const phase = deterministicOffset(group.name, Math.PI);
+
+      group.nodes.forEach((node, index) => {
+        if (index === 0) {
+          node.x = group.x + deterministicOffset(`${node.id}:hx`, 8);
+          node.y = group.y + deterministicOffset(`${node.id}:hy`, 8);
+        } else {
+          const angle = index * GOLDEN_ANGLE + phase;
+          const distance = Math.sqrt(index) * step;
+          node.x = group.x + Math.cos(angle) * distance;
+          node.y = group.y + Math.sin(angle) * distance;
+        }
+      });
     }
 
     function centerCamera() {
@@ -572,11 +812,12 @@
     }
 
     function applyLayoutForces() {
+      if (state.mode === MODE.LANDSCAPE) return;
       const repulsion = 2600;
       const attraction = 0.008;
       const idealEdgeLength = 105;
       const damping = 0.84;
-      const hotMax = maxHotspot();
+      const hotMax = maxHotspot(state.nodes);
 
       state.nodes.forEach((node) => {
         node.radius = radiusForNode(node, hotMax);
@@ -706,32 +947,39 @@
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       ctx.clearRect(0, 0, width, height);
 
-      const hotMax = maxHotspot();
+      const nodesToDraw = activeNodes();
+      const hotMax = maxHotspot(nodesToDraw);
 
       ctx.save();
       ctx.translate(state.camera.x, state.camera.y);
       ctx.scale(state.camera.scale, state.camera.scale);
 
-      state.edges.forEach((edge) => {
-        const source = nodeById.get(edge.source);
-        const target = nodeById.get(edge.target);
-        if (!source || !target) return;
-        const selected = state.selectedNodeId && (edge.source === state.selectedNodeId || edge.target === state.selectedNodeId);
-        ctx.beginPath();
-        ctx.moveTo(source.x, source.y);
-        ctx.lineTo(target.x, target.y);
-        ctx.lineWidth = selected ? 1.7 : 1.0;
-        ctx.strokeStyle = selected ? 'rgba(255,255,255,0.5)' : 'rgba(180,200,235,0.2)';
-        ctx.stroke();
-      });
+      if (state.mode === MODE.LANDSCAPE) {
+        drawHotspotGroups();
+      } else {
+        state.edges.forEach((edge) => {
+          const source = nodeById.get(edge.source);
+          const target = nodeById.get(edge.target);
+          if (!source || !target) return;
+          const selected = state.selectedNodeId && (edge.source === state.selectedNodeId || edge.target === state.selectedNodeId);
+          ctx.beginPath();
+          ctx.moveTo(source.x, source.y);
+          ctx.lineTo(target.x, target.y);
+          ctx.lineWidth = selected ? 1.7 : 1.0;
+          ctx.strokeStyle = selected ? 'rgba(255,255,255,0.5)' : 'rgba(180,200,235,0.2)';
+          ctx.stroke();
+        });
+      }
 
-      state.nodes.forEach((node) => {
+      nodesToDraw.forEach((node) => {
         const radius = radiusForNode(node, hotMax);
         node.radius = radius;
 
         const hovered = node.id === state.hoveredNodeId;
         const selected = node.id === state.selectedNodeId;
-        const fill = state.mode === MODE.HOTSPOT
+        const fill = state.mode === MODE.LANDSCAPE
+          ? colorForLanguage(node.language)
+          : state.mode === MODE.HOTSPOT
           ? hotspotColor(node.hotspot, hotMax)
           : colorForKind(node.kind);
 
@@ -742,6 +990,15 @@
           ctx.fill();
         }
 
+        if (state.mode === MODE.LANDSCAPE && node.hotspot > 0) {
+          const intensity = hotMax <= 0 ? 0 : clamp(node.hotspot / hotMax, 0, 1);
+          ctx.beginPath();
+          ctx.arc(node.x, node.y, radius + 4 + intensity * 4, 0, Math.PI * 2);
+          ctx.lineWidth = 1.2 + intensity * 2.2;
+          ctx.strokeStyle = hotspotColor(node.hotspot, hotMax).replace('rgb', 'rgba').replace(')', ',0.42)');
+          ctx.stroke();
+        }
+
         ctx.beginPath();
         ctx.arc(node.x, node.y, radius, 0, Math.PI * 2);
         ctx.fillStyle = fill;
@@ -750,8 +1007,46 @@
         ctx.lineWidth = selected ? 2.2 : 1;
         ctx.strokeStyle = selected ? 'rgba(255,255,255,0.9)' : 'rgba(255,255,255,0.22)';
         ctx.stroke();
+
+        if (state.mode === MODE.LANDSCAPE) {
+          drawHotspotLabel(node, radius, selected || hovered);
+        }
       });
 
+      ctx.restore();
+    }
+
+    function drawHotspotGroups() {
+      state.hotspotGroups.forEach((group) => {
+        ctx.beginPath();
+        ctx.arc(group.x, group.y, group.radius, 0, Math.PI * 2);
+        ctx.fillStyle = 'rgba(255,255,255,0.045)';
+        ctx.fill();
+        ctx.lineWidth = 1;
+        ctx.strokeStyle = 'rgba(255,255,255,0.08)';
+        ctx.stroke();
+
+        if (state.camera.scale < 0.16) return;
+        ctx.font = '700 16px Inter, Segoe UI, Arial';
+        ctx.fillStyle = 'rgba(240,246,255,0.86)';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(group.name, group.x, group.y - group.radius + 26);
+      });
+    }
+
+    function drawHotspotLabel(node, radius, prominent) {
+      if (!prominent && (radius < 17 || state.camera.scale < 0.45)) return;
+      const label = node.label.length > 24 ? `${node.label.slice(0, 21)}...` : node.label;
+      ctx.save();
+      ctx.font = prominent ? '700 12px Inter, Segoe UI, Arial' : '600 11px Inter, Segoe UI, Arial';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'top';
+      ctx.lineWidth = 3;
+      ctx.strokeStyle = 'rgba(7,11,23,0.82)';
+      ctx.strokeText(label, node.x, node.y + radius + 5);
+      ctx.fillStyle = 'rgba(240,246,255,0.9)';
+      ctx.fillText(label, node.x, node.y + radius + 5);
       ctx.restore();
     }
 
@@ -760,17 +1055,22 @@
       const files = state.nodes.filter((n) => n.kind === 'file' || n.kind === 'module').length;
       const classes = state.nodes.filter((n) => n.kind === 'class').length;
       const functions = state.nodes.filter((n) => n.kind === 'function').length;
-      const hotspotMax = maxHotspot();
+      const hotspotMax = maxHotspot(state.hotspots.length ? state.hotspots : state.nodes);
+      const modeName = state.mode === MODE.LANDSCAPE
+        ? 'hotspot map'
+        : state.mode === MODE.HOTSPOT
+          ? 'hotspot'
+          : 'structural';
 
       summaryEl.innerHTML = [
         ['Nodes', total],
-        ['Edges', state.edges.length],
+        ['Edges', state.mode === MODE.LANDSCAPE ? 'hidden' : state.edges.length],
         ['Files/Modules', files],
         ['Classes', classes],
         ['Functions', functions],
         ['Max hotspot', hotspotMax],
-        ['Selected mode', state.mode === MODE.HOTSPOT ? 'hotspot' : 'structural'],
-        ['Coverage', total ? `${Math.round((functions / total) * 100)}% fn nodes` : '0%'],
+        ['Map files', state.hotspots.length],
+        ['Selected mode', modeName],
       ].map(([label, value]) => `
           <div class="metric">
             <div class="label">${label}</div>
@@ -790,14 +1090,20 @@
 
     function setSelectedNode(nodeId) {
       state.selectedNodeId = nodeId;
-      const node = nodeId ? nodeById.get(nodeId) : null;
+      const node = nodeId ? activeNodeById().get(nodeId) : null;
       if (!node) {
         detailsEl.innerHTML = `
           <h2 class="panel-title">Детали узла</h2>
           <h3>Ничего не выбрано</h3>
-          <p class="muted">Кликни по узлу на графе чтобы увидеть связи, уровень вложенности и hotspot score.</p>
+          <p class="muted">Кликни по узлу на карте чтобы увидеть метрики, связи или файловый hotspot.</p>
         `;
         relatedEl.innerHTML = '<div class="muted">Нет связей для отображения.</div>';
+        requestDraw();
+        return;
+      }
+
+      if (state.mode === MODE.LANDSCAPE) {
+        renderHotspotDetails(node);
         requestDraw();
         return;
       }
@@ -838,11 +1144,47 @@
       requestDraw();
     }
 
+    function renderHotspotDetails(node) {
+      detailsEl.innerHTML = `
+        <h2 class="panel-title">File hotspot</h2>
+        <h3>${escapeHtml(node.label)}</h3>
+        <div class="muted">${escapeHtml(node.path)}</div>
+        <div class="tags">
+          <span class="tag">hotspot: ${node.hotspot}</span>
+          <span class="tag">language: ${escapeHtml(node.language)}</span>
+          <span class="tag">symbols: ${node.symbolCount}</span>
+          <span class="tag">group: ${escapeHtml(node.group)}</span>
+        </div>
+        <div class="actions">
+          <button class="detail-action" type="button" data-action="open" data-file="${escapeHtml(node.path)}">Open in editor</button>
+        </div>
+      `;
+
+      const peers = state.hotspots
+        .filter((item) => item.group === node.group && item.id !== node.id)
+        .sort((a, b) => {
+          if (b.hotspot !== a.hotspot) return b.hotspot - a.hotspot;
+          if (b.symbolCount !== a.symbolCount) return b.symbolCount - a.symbolCount;
+          return a.path.localeCompare(b.path);
+        })
+        .slice(0, 30);
+
+      relatedEl.innerHTML = peers.length
+        ? peers.map((item) => `
+          <div class="related-item">
+            <b>${escapeHtml(item.label)}</b>
+            <div class="muted">${escapeHtml(item.language)} &middot; hotspot ${item.hotspot} &middot; ${escapeHtml(item.path)}</div>
+          </div>
+        `).join('')
+        : '<div class="muted">В этой группе пока нет соседних файлов.</div>';
+    }
+
     function pickNodeAt(screenX, screenY) {
       const worldX = (screenX - state.camera.x) / state.camera.scale;
       const worldY = (screenY - state.camera.y) / state.camera.scale;
-      for (let i = state.nodes.length - 1; i >= 0; i -= 1) {
-        const node = state.nodes[i];
+      const nodes = activeNodes();
+      for (let i = nodes.length - 1; i >= 0; i -= 1) {
+        const node = nodes[i];
         const dx = worldX - node.x;
         const dy = worldY - node.y;
         if (dx * dx + dy * dy <= (node.radius + 3) * (node.radius + 3)) {
@@ -854,12 +1196,29 @@
 
     function applyMode(mode) {
       state.mode = mode;
+      if (mode === MODE.LANDSCAPE) {
+        layoutHotspotMap();
+      }
+      setActiveWorld();
+      state.cameraDirty = false;
+      centerCamera();
       modeButtons.forEach((button) => {
         button.classList.toggle('active', button.dataset.mode === mode);
       });
       updateSummary();
-      const modeLabel = mode === MODE.HOTSPOT ? 'Hotspot overlay' : 'Structural view';
-      statusEl.textContent = `Mode: ${modeLabel}. Управление: drag для панорамы, wheel для zoom, click по узлу для деталей.`;
+      const modeLabel = mode === MODE.LANDSCAPE
+        ? 'Hotspot map'
+        : mode === MODE.HOTSPOT
+          ? 'Hotspot overlay'
+          : 'Structural view';
+      const modeHint = mode === MODE.LANDSCAPE
+        ? 'Файлы сгруппированы по папкам, связи скрыты.'
+        : 'Связи и вложенность отображаются ребрами.';
+      statusEl.textContent = `Mode: ${modeLabel}. ${modeHint} Управление: drag для панорамы, wheel для zoom, click по узлу для деталей.`;
+      setSelectedNode(activeNodes()[0] ? activeNodes()[0].id : null);
+      if (mode !== MODE.LANDSCAPE && state.layoutTicks < layoutLimit()) {
+        requestAnimationFrame(tick);
+      }
       requestDraw();
     }
 
@@ -953,12 +1312,17 @@
       }, { passive: false });
 
       window.addEventListener('resize', () => {
+        if (state.mode === MODE.LANDSCAPE) {
+          layoutHotspotMap();
+        }
+        setActiveWorld();
         if (!state.cameraDirty) centerCamera();
         requestDraw();
       });
     }
 
     function tick() {
+      if (state.mode === MODE.LANDSCAPE) return;
       if (state.layoutTicks >= layoutLimit()) return;
       applyLayoutForces();
       state.layoutTicks += 1;
@@ -975,12 +1339,12 @@
       }
 
       initializePositions();
-      updateSummary();
-      setSelectedNode(state.nodes[0] ? state.nodes[0].id : null);
       applyMode(state.mode);
       bindInteractions();
       drawGraph();
-      requestAnimationFrame(tick);
+      if (state.mode !== MODE.LANDSCAPE) {
+        requestAnimationFrame(tick);
+      }
     }
 
     bootstrap();

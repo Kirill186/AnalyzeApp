@@ -12,6 +12,10 @@ from analyze_app.domain.entities import ProjectGraph
 from analyze_app.presentation.qt_shell.web_view_utils import render_html_template
 
 
+WEB_HOTSPOT_NODE_THRESHOLD = 700
+WEB_HOTSPOT_EDGE_THRESHOLD = 1400
+
+
 class ProjectMapWebPage(QWebEnginePage):
     open_requested = Signal(str)
     rebuild_requested = Signal()
@@ -56,24 +60,7 @@ class ProjectMapTab(QWidget):
 
     def set_project_map(self, graph: ProjectGraph) -> None:
         self._loading = False
-        self._nodes = [
-            {
-                "id": node.node_id,
-                "kind": node.kind,
-                "label": node.label,
-                "path": node.path,
-                "hotspot": node.hotspot_score,
-            }
-            for node in graph.nodes
-        ]
-        self._edges = [
-            {
-                "source": edge.source,
-                "target": edge.target,
-                "relation": edge.relation,
-            }
-            for edge in graph.edges
-        ]
+        self._nodes, self._edges = _graph_payload_for_web(graph)
         self._render_current_state()
 
     def set_loading(self) -> None:
@@ -103,3 +90,51 @@ class ProjectMapTab(QWidget):
             },
         )
         self.web.setHtml(html, QUrl.fromLocalFile(str(template_path.parent)))
+
+
+def _graph_payload_for_web(graph: ProjectGraph) -> tuple[list[dict[str, str | int]], list[dict[str, str]]]:
+    if len(graph.nodes) > WEB_HOTSPOT_NODE_THRESHOLD or len(graph.edges) > WEB_HOTSPOT_EDGE_THRESHOLD:
+        return _file_hotspot_payload(graph), []
+
+    nodes = [
+        {
+            "id": node.node_id,
+            "kind": node.kind,
+            "label": node.label,
+            "path": node.path,
+            "hotspot": node.hotspot_score,
+        }
+        for node in graph.nodes
+    ]
+    edges = [
+        {
+            "source": edge.source,
+            "target": edge.target,
+            "relation": edge.relation,
+        }
+        for edge in graph.edges
+    ]
+    return nodes, edges
+
+
+def _file_hotspot_payload(graph: ProjectGraph) -> list[dict[str, str | int]]:
+    by_path: dict[str, dict[str, str | int]] = {}
+    for node in graph.nodes:
+        if not node.path:
+            continue
+        if node.kind != "file" and "." not in Path(node.path).name:
+            continue
+
+        item = by_path.setdefault(
+            node.path,
+            {
+                "id": f"file:{node.path}",
+                "kind": "file",
+                "label": node.path,
+                "path": node.path,
+                "hotspot": 0,
+            },
+        )
+        item["hotspot"] = max(int(item["hotspot"]), node.hotspot_score)
+
+    return sorted(by_path.values(), key=lambda item: str(item["path"]))

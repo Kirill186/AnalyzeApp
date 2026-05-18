@@ -68,6 +68,8 @@ IGNORED_PARTS = {
     "target",
     "venv",
 }
+LARGE_AST_FILE_THRESHOLD = 450
+LARGE_PROJECT_FILE_THRESHOLD = 900
 
 
 class AstMapBuilder:
@@ -80,11 +82,17 @@ class AstMapBuilder:
         churn = churn or {}
         nodes: list[GraphNode] = []
         edges: list[GraphEdge] = []
+        python_files = [
+            rel_path
+            for rel_path in _python_files(repo_path, tracked_files)
+            if not _is_ignored_path(tuple(rel_path.split("/")))
+        ]
 
-        for rel_path in _python_files(repo_path, tracked_files):
+        if len(python_files) > LARGE_AST_FILE_THRESHOLD:
+            return _build_file_hotspot_map(repo_path, churn, tracked_files)
+
+        for rel_path in python_files:
             rel_parts = tuple(rel_path.split("/"))
-            if _is_ignored_path(rel_parts):
-                continue
             py_file = repo_path.joinpath(*rel_parts)
             file_node_id = f"file:{rel_path}"
             nodes.append(
@@ -151,7 +159,10 @@ class AstMapBuilder:
                         edges.append(GraphEdge(source=file_node_id, target=target, relation="imports"))
 
         if not nodes:
-            return _build_generic_file_map(repo_path, churn, tracked_files)
+            project_files = _visible_project_files(repo_path, tracked_files)
+            if len(project_files) > LARGE_PROJECT_FILE_THRESHOLD:
+                return _build_file_hotspot_map_from_paths(project_files, churn)
+            return _build_generic_file_map_from_paths(project_files, churn)
         return ProjectGraph(nodes=nodes, edges=edges)
 
 
@@ -174,15 +185,46 @@ def _build_generic_file_map(
     churn: dict[str, int],
     tracked_files: list[str] | None,
 ) -> ProjectGraph:
+    return _build_generic_file_map_from_paths(_visible_project_files(repo_path, tracked_files), churn)
+
+
+def _build_file_hotspot_map(
+    repo_path: Path,
+    churn: dict[str, int],
+    tracked_files: list[str] | None,
+) -> ProjectGraph:
+    return _build_file_hotspot_map_from_paths(_visible_project_files(repo_path, tracked_files), churn)
+
+
+def _build_file_hotspot_map_from_paths(rel_paths: list[str], churn: dict[str, int]) -> ProjectGraph:
+    nodes: list[GraphNode] = []
+    seen_nodes: set[str] = set()
+
+    for rel_path in rel_paths:
+        file_node_id = f"file:{rel_path}"
+        if file_node_id in seen_nodes:
+            continue
+        seen_nodes.add(file_node_id)
+        nodes.append(
+            GraphNode(
+                node_id=file_node_id,
+                kind="file",
+                label=rel_path,
+                path=rel_path,
+                hotspot_score=churn.get(rel_path, 0),
+            )
+        )
+
+    return ProjectGraph(nodes=nodes, edges=[])
+
+
+def _build_generic_file_map_from_paths(rel_paths: list[str], churn: dict[str, int]) -> ProjectGraph:
     nodes: list[GraphNode] = []
     edges: list[GraphEdge] = []
     seen_nodes: set[str] = set()
 
-    rel_paths = _project_files(repo_path, tracked_files)
     for rel_path in rel_paths:
         rel_parts = tuple(rel_path.split("/"))
-        if _is_ignored_path(rel_parts):
-            continue
 
         parent_id: str | None = None
         if len(rel_parts) > 1:
@@ -217,6 +259,14 @@ def _build_generic_file_map(
             edges.append(GraphEdge(source=parent_id, target=file_node_id, relation="contains"))
 
     return ProjectGraph(nodes=nodes, edges=edges)
+
+
+def _visible_project_files(repo_path: Path, tracked_files: list[str] | None) -> list[str]:
+    return [
+        rel_path
+        for rel_path in _project_files(repo_path, tracked_files)
+        if not _is_ignored_path(tuple(rel_path.split("/")))
+    ]
 
 
 def _project_files(repo_path: Path, tracked_files: list[str] | None) -> list[str]:
