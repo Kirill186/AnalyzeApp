@@ -11,12 +11,22 @@ dependencies = [
   "llama-cpp-python==0.3.0",
   "PySide6>=6.7.0",
   "markdown>=3.6",
+  "numpy>=1.26",
+  "onnxruntime>=1.18",
   "radon>=6.0.1",
+  "transformers>=4.40",
 ]
 
 [project.optional-dependencies]
 ollama = [
   "ollama>=0.4.0",
+]
+
+[tool.setuptools.package-data]
+"analyze_app.infrastructure.ai.authorship" = [
+  "default_model.json",
+  "default_calibration.json",
+  "bundled_onnx/*",
 ]
 
 [project.scripts]

@@ -5,6 +5,11 @@ from dataclasses import dataclass
 from pathlib import Path
 
 
+_PACKAGE_ROOT = Path(__file__).resolve().parents[1]
+_DEFAULT_AI_AUTHORSHIP_MODEL_PATH = _PACKAGE_ROOT / "infrastructure" / "ai" / "authorship" / "bundled_onnx"
+_DEFAULT_AI_AUTHORSHIP_CALIBRATION_PATH = _PACKAGE_ROOT / "infrastructure" / "ai" / "authorship" / "default_calibration.json"
+
+
 def _env_int(name: str, default: int) -> int:
     try:
         return int(os.getenv(name, str(default)))
@@ -24,12 +29,12 @@ class AppConfig:
     ollama_url: str = os.getenv("ANALYZE_APP_OLLAMA_URL", "http://localhost:11434/api/generate")
     ollama_model: str = os.getenv("ANALYZE_APP_OLLAMA_MODEL", "llama3.2:latest")
     ai_authorship_model_path: Path = Path(
-        os.getenv("ANALYZE_APP_AI_AUTHORSHIP_MODEL_PATH", "analyze_app/infrastructure/ai/authorship/default_model.json")
+        os.getenv("ANALYZE_APP_AI_AUTHORSHIP_MODEL_PATH", str(_DEFAULT_AI_AUTHORSHIP_MODEL_PATH))
     )
     ai_authorship_calibration_path: Path = Path(
         os.getenv(
             "ANALYZE_APP_AI_AUTHORSHIP_CALIBRATION_PATH",
-            "analyze_app/infrastructure/ai/authorship/default_calibration.json",
+            str(_DEFAULT_AI_AUTHORSHIP_CALIBRATION_PATH),
         )
     )
 

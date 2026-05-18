@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 
 from analyze_app.domain.entities import AIAuthorshipResult
-from analyze_app.infrastructure.ai.authorship import FeatureExtractor, ModelRuntime, ProbabilityCalibrator
+from analyze_app.infrastructure.ai.authorship import AuthorshipRuntime, FeatureExtractor, ProbabilityCalibrator
 from analyze_app.infrastructure.git.backend import GitBackend
 from analyze_app.infrastructure.storage.sqlite_store import SqliteStore
 
@@ -19,7 +20,7 @@ class DetectAIAuthorshipUseCase:
         git_backend: GitBackend,
         store: SqliteStore,
         extractor: FeatureExtractor,
-        model_runtime: ModelRuntime,
+        model_runtime: AuthorshipRuntime,
         calibrator: ProbabilityCalibrator,
     ) -> None:
         self.git_backend = git_backend
@@ -37,17 +38,20 @@ class DetectAIAuthorshipUseCase:
         files: list[str] | None = None,
         use_cache: bool = True,
     ) -> AIAuthorshipResult:
-        scope_key = self._scope_key(scope, commit_hash, files)
+        code_blobs = self._collect_code(repo_path, scope, commit_hash, files)
+        scope_key = self._scope_key(scope, commit_hash, files, code_blobs)
 
         if use_cache:
             cached = self.store.load_ai_authorship(repo_id, scope_key)
-            if cached and cached.model_info.endswith(self.model_runtime.model_version):
+            if cached and cached.model_info.startswith(self.model_runtime.model_version):
                 return cached
 
-        code_blobs = self._collect_code(repo_path, scope, commit_hash, files)
         features = self._aggregate_features(code_blobs)
 
-        raw_probability = self.model_runtime.predict_probability(features)
+        if hasattr(self.model_runtime, "predict_code_probability"):
+            raw_probability = self.model_runtime.predict_code_probability(code_blobs)  # type: ignore[attr-defined]
+        else:
+            raw_probability = self.model_runtime.predict_probability(features)
         calibrated_probability = self.calibrator.calibrate(raw_probability)
         confidence = self._confidence(features, len(code_blobs))
         signals = self.model_runtime.explain(features)
@@ -97,6 +101,15 @@ class DetectAIAuthorshipUseCase:
                 text = self.git_backend.read_working_tree_file(repo_path, item.path)
                 if text:
                     code.append(text)
+            if code:
+                return code
+
+            for file_path in self.git_backend.list_tracked_files(repo_path):
+                if not file_path.endswith(".py"):
+                    continue
+                text = self.git_backend.read_working_tree_file(repo_path, file_path)
+                if text:
+                    code.append(text)
             return code
 
         raise ValueError(f"Unsupported scope: {scope}")
@@ -117,10 +130,19 @@ class DetectAIAuthorshipUseCase:
         return max(0.05, base - syntax_error_penalty)
 
     @staticmethod
-    def _scope_key(scope: str, commit_hash: str | None, files: list[str] | None) -> str:
+    def _scope_key(scope: str, commit_hash: str | None, files: list[str] | None, code_blobs: list[str]) -> str:
+        content_hash = DetectAIAuthorshipUseCase._content_hash(code_blobs)
         if scope == "commit":
-            return f"commit:{commit_hash}"
+            return f"commit:{commit_hash}:{content_hash}"
         if scope == "file":
             normalized = ",".join(sorted(files or []))
-            return f"file:{normalized}"
-        return "working_tree"
+            return f"file:{normalized}:{content_hash}"
+        return f"working_tree:{content_hash}"
+
+    @staticmethod
+    def _content_hash(code_blobs: list[str]) -> str:
+        digest = hashlib.sha256()
+        for text in code_blobs:
+            digest.update(len(text).to_bytes(8, "big", signed=False))
+            digest.update(text.encode("utf-8", errors="replace"))
+        return digest.hexdigest()[:16]

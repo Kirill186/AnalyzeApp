@@ -18,7 +18,12 @@ from analyze_app.infrastructure.ai.factory import build_diff_ai_backend, build_p
 from analyze_app.infrastructure.analysis.map.ast_map_builder import AstMapBuilder
 from analyze_app.infrastructure.analysis.pytest_runner import PytestRunner
 from analyze_app.infrastructure.analysis.ruff_runner import RuffRunner
-from analyze_app.infrastructure.ai.authorship import FeatureExtractor, ModelRuntime, ProbabilityCalibrator
+from analyze_app.infrastructure.ai.authorship import (
+    FeatureExtractor,
+    ProbabilityCalibrator,
+    build_authorship_runtime,
+    resolve_authorship_calibration_path,
+)
 from analyze_app.infrastructure.git.backend import GitBackend
 from analyze_app.infrastructure.storage.sqlite_store import SqliteStore
 from analyze_app.shared.config import DEFAULT_CONFIG
@@ -123,12 +128,13 @@ def cmd_commit_push(args: argparse.Namespace) -> None:
 
 def _build_ai_authorship_use_case(git_backend: GitBackend, store: SqliteStore) -> DetectAIAuthorshipUseCase:
     config = DEFAULT_CONFIG
+    calibration_path = resolve_authorship_calibration_path(config.ai_authorship_model_path, config.ai_authorship_calibration_path)
     return DetectAIAuthorshipUseCase(
         git_backend=git_backend,
         store=store,
         extractor=FeatureExtractor(),
-        model_runtime=ModelRuntime(config.ai_authorship_model_path),
-        calibrator=ProbabilityCalibrator(config.ai_authorship_calibration_path),
+        model_runtime=build_authorship_runtime(config.ai_authorship_model_path),
+        calibrator=ProbabilityCalibrator(calibration_path),
     )
 
 

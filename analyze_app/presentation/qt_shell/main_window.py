@@ -38,7 +38,12 @@ from analyze_app.domain.entities import (
     ProjectOverviewResult,
     TestRunResult,
 )
-from analyze_app.infrastructure.ai.authorship import FeatureExtractor, ModelRuntime, ProbabilityCalibrator
+from analyze_app.infrastructure.ai.authorship import (
+    FeatureExtractor,
+    ProbabilityCalibrator,
+    build_authorship_runtime,
+    resolve_authorship_calibration_path,
+)
 from analyze_app.infrastructure.ai.factory import build_diff_ai_backend, build_project_overview_backend
 from analyze_app.infrastructure.analysis.duplication_runner import DuplicationRunner
 from analyze_app.infrastructure.analysis.map.ast_map_builder import AstMapBuilder
@@ -1063,12 +1068,16 @@ class MainWindow(QMainWindow):
         return grade, f"{probability_pct:.1f}% (conf {result.confidence:.2f})", "ниже — лучше"
 
     def _build_ai_authorship_use_case(self):
+        calibration_path = resolve_authorship_calibration_path(
+            DEFAULT_CONFIG.ai_authorship_model_path,
+            DEFAULT_CONFIG.ai_authorship_calibration_path,
+        )
         return DetectAIAuthorshipUseCase(
             git_backend=self.git_backend,
             store=self.store,
             extractor=FeatureExtractor(),
-            model_runtime=ModelRuntime(DEFAULT_CONFIG.ai_authorship_model_path),
-            calibrator=ProbabilityCalibrator(DEFAULT_CONFIG.ai_authorship_calibration_path),
+            model_runtime=build_authorship_runtime(DEFAULT_CONFIG.ai_authorship_model_path),
+            calibrator=ProbabilityCalibrator(calibration_path),
         )
 
     @staticmethod
@@ -2003,12 +2012,16 @@ def _calculate_ai_signal_metric(
 
 
 def _build_ai_authorship_use_case(git_backend: GitBackend, store: SqliteStore) -> DetectAIAuthorshipUseCase:
+    calibration_path = resolve_authorship_calibration_path(
+        DEFAULT_CONFIG.ai_authorship_model_path,
+        DEFAULT_CONFIG.ai_authorship_calibration_path,
+    )
     return DetectAIAuthorshipUseCase(
         git_backend=git_backend,
         store=store,
         extractor=FeatureExtractor(),
-        model_runtime=ModelRuntime(DEFAULT_CONFIG.ai_authorship_model_path),
-        calibrator=ProbabilityCalibrator(DEFAULT_CONFIG.ai_authorship_calibration_path),
+        model_runtime=build_authorship_runtime(DEFAULT_CONFIG.ai_authorship_model_path),
+        calibrator=ProbabilityCalibrator(calibration_path),
     )
 
 

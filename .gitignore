@@ -2,3 +2,4 @@ __pycache__/
 *.py[cod]
 .analyze_app.sqlite3
 .analyze_repos/
+analyze_app/infrastructure/ai/authorship/bundled_onnx/
