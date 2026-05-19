@@ -1,0 +1,5 @@
+{
+  "method": "temperature",
+  "calibration_version": "temperature-v1-t3.0",
+  "temperature": 3.0
+}

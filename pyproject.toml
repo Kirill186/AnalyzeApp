@@ -26,6 +26,7 @@ ollama = [
 "analyze_app.infrastructure.ai.authorship" = [
   "default_model.json",
   "default_calibration.json",
+  "onnx_default_calibration.json",
   "bundled_onnx/*",
 ]
 

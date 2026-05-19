@@ -13,6 +13,7 @@ class ProbabilityCalibrator:
         self.version: str = payload.get("calibration_version", "none")
         self.a: float = float(payload.get("a", 1.0))
         self.b: float = float(payload.get("b", 0.0))
+        self.temperature: float = max(float(payload.get("temperature", payload.get("t", 1.0))), 1e-6)
         self.xs: list[float] = [float(x) for x in payload.get("xs", [])]
         self.ys: list[float] = [float(y) for y in payload.get("ys", [])]
 
@@ -21,6 +22,9 @@ class ProbabilityCalibrator:
         if self.method == "platt":
             logit = math.log(p / (1 - p))
             return self._sigmoid(self.a * logit + self.b)
+        if self.method == "temperature":
+            logit = math.log(p / (1 - p))
+            return self._sigmoid(logit / self.temperature)
         if self.method == "isotonic":
             return self._interpolate(p)
         return p

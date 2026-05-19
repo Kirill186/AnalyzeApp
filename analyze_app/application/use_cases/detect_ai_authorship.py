@@ -43,7 +43,11 @@ class DetectAIAuthorshipUseCase:
 
         if use_cache:
             cached = self.store.load_ai_authorship(repo_id, scope_key)
-            if cached and cached.model_info.startswith(self.model_runtime.model_version):
+            if (
+                cached
+                and cached.model_info.startswith(self.model_runtime.model_version)
+                and cached.calibration_version == self.calibrator.version
+            ):
                 return cached
 
         features = self._aggregate_features(code_blobs)
