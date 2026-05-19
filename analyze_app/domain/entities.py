@@ -133,8 +133,21 @@ class ProjectGraph:
 
 
 @dataclass(slots=True)
+class DuplicateLocation:
+    file: str
+    line: int
+
+
+@dataclass(slots=True)
+class DuplicateBlock:
+    locations: list[DuplicateLocation] = field(default_factory=list)
+    preview: str = ""
+
+
+@dataclass(slots=True)
 class DuplicationResult:
     duplicate_groups: int
     duplicate_fragments: int
     duplicated_lines: int
     duplication_pct: float
+    duplicate_blocks: list[DuplicateBlock] = field(default_factory=list)

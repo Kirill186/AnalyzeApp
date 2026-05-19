@@ -65,7 +65,15 @@ class OverviewTab(QWidget):
             "summaryHtml": "<p class='muted'>Описание пока отсутствует</p>",
             "readmeHtml": "<p class='muted'>README отсутствует</p>",
             "metrics": [
-                {"name": name, "label": label, "grade": "—", "value": "—", "threshold": "", "loading": False}
+                {
+                    "name": name,
+                    "label": label,
+                    "grade": "—",
+                    "value": "—",
+                    "threshold": "",
+                    "details": [],
+                    "loading": False,
+                }
                 for name, label in self.METRICS_ORDER
             ],
         }
@@ -86,6 +94,7 @@ class OverviewTab(QWidget):
                 "grade": "",
                 "value": "Анализ выполняется",
                 "threshold": "",
+                "details": [],
                 "loading": True,
             }
             for name, label in self.METRICS_ORDER
@@ -115,16 +124,35 @@ class OverviewTab(QWidget):
         self._state["summaryHtml"] = markdown_to_html(summary or "Описание пока отсутствует")
         self._render()
 
-    def update_metrics(self, metrics: dict[str, tuple[str, str, str]]) -> None:
+    def update_metrics(
+        self,
+        metrics: dict[str, tuple[str, str, str]],
+        metric_details: dict[str, list[dict[str, str]]] | None = None,
+    ) -> None:
         self._state["metrics"] = []
+        metric_details = metric_details or {}
         for metric_name, label in self.METRICS_ORDER:
             grade, value, threshold = metrics.get(metric_name, ("—", "—", ""))
+            details = metric_details.get(metric_name, [])
             self._state["metrics"].append(
-                {"name": metric_name, "label": label, "grade": grade, "value": value, "threshold": threshold, "loading": False}
+                {
+                    "name": metric_name,
+                    "label": label,
+                    "grade": grade,
+                    "value": value,
+                    "threshold": threshold,
+                    "details": details,
+                    "loading": False,
+                }
             )
         self._render()
 
-    def update_metric(self, metric_name: str, metric: tuple[str, str, str]) -> None:
+    def update_metric(
+        self,
+        metric_name: str,
+        metric: tuple[str, str, str],
+        details: list[dict[str, str]] | None = None,
+    ) -> None:
         grade, value, threshold = metric
         metrics = self._state.get("metrics")
         if not isinstance(metrics, list):
@@ -132,7 +160,10 @@ class OverviewTab(QWidget):
         for item in metrics:
             if not isinstance(item, dict) or item.get("name") != metric_name:
                 continue
-            item.update({"grade": grade, "value": value, "threshold": threshold, "loading": False})
+            payload = {"grade": grade, "value": value, "threshold": threshold, "loading": False}
+            if details is not None:
+                payload["details"] = details
+            item.update(payload)
             self._render()
             return
 

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import sys
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 import os
 import re
@@ -31,8 +31,10 @@ from analyze_app.application.use_cases.import_repository import ImportRepository
 from analyze_app.application.use_cases.list_commits import ListCommitsUseCase
 from analyze_app.domain.entities import (
     Commit,
+    DuplicationResult,
     GraphEdge,
     GraphNode,
+    Issue,
     LLMResult,
     ProjectGraph,
     ProjectOverviewResult,
@@ -66,6 +68,11 @@ from analyze_app.shared.config import AppConfig, DEFAULT_CONFIG
 
 COMMIT_HISTORY_LIMIT = 300
 WORKSPACE_TEXT_LIMIT = 300_000
+MAX_METRIC_DETAIL_ITEMS = 80
+
+MetricValue = tuple[str, str, str]
+MetricDetail = dict[str, str]
+MetricDetailsMap = dict[str, list[MetricDetail]]
 
 
 @dataclass(slots=True)
@@ -103,12 +110,13 @@ class RepositoryRefreshResult:
     files_count: int
     loc: int
     summary: str
-    metrics: dict[str, tuple[str, str, str]]
+    metrics: dict[str, MetricValue]
     commits: list
     project_map: ProjectGraph | None
     workspace_files: list[dict[str, object]]
     workspace_diffs: dict[str, str]
     working_tree_message: str | None
+    metric_details: MetricDetailsMap = field(default_factory=dict)
 
 
 @dataclass(slots=True)
@@ -175,6 +183,7 @@ class RepositoryRefreshWorker(QObject):
         commits = ListCommitsUseCase(self.git_backend).execute(repo_path, limit=COMMIT_HISTORY_LIMIT)
         tests_results: list[TestRunResult] = []
 
+        metric_details: MetricDetailsMap = {}
         metrics = _calculate_quality_metrics(
             repo_id=self.repo.repo_id,
             repo_path=repo_path,
@@ -183,6 +192,7 @@ class RepositoryRefreshWorker(QObject):
             git_backend=self.git_backend,
             store=self.store,
             tracked_files=tracked_files,
+            metric_details=metric_details,
             on_metric_result=self._emit_metric_progress,
             on_test_result=self._emit_test_progress,
             on_tests_finished=tests_results.append,
@@ -233,6 +243,7 @@ class RepositoryRefreshWorker(QObject):
             workspace_files=workspace_files,
             workspace_diffs=workspace_diffs,
             working_tree_message=working_tree_message,
+            metric_details=metric_details,
         )
 
     def _emit_test_progress(self, nodeid: str, status: str) -> None:
@@ -875,7 +886,7 @@ class MainWindow(QMainWindow):
             self.tabs.overview_tab.update_project_info(title, result.files_count, result.loc, result.summary)
         else:
             self.tabs.overview_tab.update_project_stats(title, result.files_count, result.loc)
-        self.tabs.overview_tab.update_metrics(result.metrics)
+        self.tabs.overview_tab.update_metrics(result.metrics, result.metric_details)
         self.tabs.overview_tab.load_readme(result.repo_path)
         self.tabs.commits_tab.set_commits(result.commits)
         if result.project_map is not None:
@@ -937,7 +948,9 @@ class MainWindow(QMainWindow):
         cached_overview = self.store.load_project_overview(self.current_repo.repo_id)
         summary = cached_overview[0] if cached_overview else "Описание пока не сгенерировано. Нажмите Regenerate."
         self.tabs.overview_tab.update_project_info(self.current_repo.title, len(tracked_files), loc, summary)
-        self.tabs.overview_tab.update_metrics(self._calculate_quality_metrics(repo_path, loc, tracked_files))
+        metric_details: MetricDetailsMap = {}
+        metrics = self._calculate_quality_metrics(repo_path, loc, tracked_files, metric_details=metric_details)
+        self.tabs.overview_tab.update_metrics(metrics, metric_details)
         self.tabs.overview_tab.load_readme(repo_path)
 
     def _count_python_loc(self, repo_path: Path, tracked_files: list[str] | None = None) -> int:
@@ -955,117 +968,32 @@ class MainWindow(QMainWindow):
         repo_path: Path,
         loc: int,
         tracked_files: list[str] | None = None,
-    ) -> dict[str, tuple[str, str, str]]:
-        thresholds = self.state_store.quality_thresholds()
-        kloc = max(loc / 1000.0, 0.001)
-
-        metrics: dict[str, tuple[str, str, str]] = {}
-
-        ruff_issues = RuffRunner().run(repo_path)
-        lint_count = len([issue for issue in ruff_issues if issue.severity in {"warning", "error"}])
-        lint_per_kloc = lint_count / kloc
-        lint_thr = thresholds["lint_issues_per_kloc"]
-        metrics["lint"] = (
-            self._grade_lower_better(lint_per_kloc, lint_thr),
-            f"{lint_count} ({lint_per_kloc:.1f}/KLOC)",
-            self._fmt_thresholds("<=", lint_thr),
+        metric_details: MetricDetailsMap | None = None,
+    ) -> dict[str, MetricValue]:
+        if not self.current_repo:
+            return {}
+        return _calculate_quality_metrics(
+            repo_id=self.current_repo.repo_id,
+            repo_path=repo_path,
+            loc=loc,
+            thresholds=self.state_store.quality_thresholds(),
+            git_backend=self.git_backend,
+            store=self.store,
+            tracked_files=tracked_files,
+            metric_details=metric_details,
         )
-
-        mypy_issues = MypyRunner().run(repo_path)
-        mypy_errors = len([issue for issue in mypy_issues if issue.severity == "error"])
-        mypy_per_kloc = mypy_errors / kloc
-        mypy_thr = thresholds["mypy_errors_per_kloc"]
-        metrics["typing_health"] = (
-            self._grade_lower_better(mypy_per_kloc, mypy_thr),
-            f"{mypy_errors} ({mypy_per_kloc:.1f}/KLOC)",
-            self._fmt_thresholds("<=", mypy_thr),
-        )
-
-        radon_issues = RadonRunner().run(repo_path)
-        complexity_ranks = _extract_ranks(radon_issues)
-        if complexity_ranks:
-            b_plus = sum(1 for rank in complexity_ranks if rank in {"B", "C", "D", "E", "F"})
-            share_pct = (b_plus / len(complexity_ranks)) * 100.0
-            complexity_thr = thresholds["complexity_b_plus_share_pct"]
-            max_complexity = max(_extract_values(radon_issues, r"complexity\s+([0-9]+(?:\.[0-9]+)?)"), default=0.0)
-            metrics["complexity"] = (
-                self._grade_lower_better(share_pct, complexity_thr),
-                f"{share_pct:.1f}% B+ (max {max_complexity:.0f})",
-                self._fmt_thresholds("<=", complexity_thr),
-            )
-        else:
-            metrics["complexity"] = ("—", "n/a", "нет данных radon")
-
-        maintainability_values = _extract_values(radon_issues, r"Maintainability index is\s+([0-9]+(?:\.[0-9]+)?)")
-        if maintainability_values:
-            avg_mi = sum(maintainability_values) / len(maintainability_values)
-            mi_thr = thresholds["maintainability_avg_mi"]
-            metrics["maintainability"] = (
-                self._grade_upper_better(avg_mi, mi_thr),
-                f"{avg_mi:.1f}",
-                self._fmt_thresholds(">=", mi_thr),
-            )
-        else:
-            metrics["maintainability"] = ("—", "n/a", "нет данных radon")
-
-        dead_code_issues = VultureRunner().run(repo_path, tracked_files=tracked_files)
-        dead_code_count = len([issue for issue in dead_code_issues if issue.severity in {"warning", "error"}])
-        dead_code_per_kloc = dead_code_count / kloc
-        dead_thr = thresholds["dead_code_findings_per_kloc"]
-        metrics["dead_code"] = (
-            self._grade_lower_better(dead_code_per_kloc, dead_thr),
-            f"{dead_code_count} ({dead_code_per_kloc:.1f}/KLOC)",
-            self._fmt_thresholds("<=", dead_thr),
-        )
-
-        duplication = DuplicationRunner().run(repo_path, tracked_files=tracked_files)
-        dup_thr = thresholds["duplication_pct"]
-        metrics["duplication"] = (
-            self._grade_lower_better(duplication.duplication_pct, dup_thr),
-            f"{duplication.duplication_pct:.1f}% ({duplication.duplicate_groups} групп)",
-            self._fmt_thresholds("<=", dup_thr),
-        )
-        metrics["ai_signal"] = self._calculate_ai_signal_metric(repo_path)
-
-        tests = PytestRunner().run(repo_path)
-        if tests.total > 0:
-            failed_rate = (tests.failed / tests.total) * 100.0
-            test_thr = thresholds["tests_failed_rate_pct"]
-            metrics["tests"] = (
-                self._grade_lower_better(failed_rate, test_thr),
-                f"{tests.failed}/{tests.total} ({failed_rate:.1f}%)",
-                self._fmt_thresholds("<=", test_thr),
-            )
-        else:
-            metrics["tests"] = ("—", "n/a", "нет данных тестов")
-
-        return metrics
 
     def _calculate_ai_signal_metric(self, repo_path: Path) -> tuple[str, str, str]:
         if not self.current_repo:
             return "—", "n/a", "репозиторий не выбран"
-        try:
-            result = self._build_ai_authorship_use_case().execute(
-                repo_id=self.current_repo.repo_id,
-                repo_path=repo_path,
-                scope="working_tree",
-                use_cache=True,
-            )
-        except Exception:
-            return "—", "n/a", "нет данных AIAuthorship"
-
-        probability_pct = result.probability * 100.0
-        if probability_pct < 20:
-            grade = "A"
-        elif probability_pct < 40:
-            grade = "B"
-        elif probability_pct < 60:
-            grade = "C"
-        elif probability_pct < 80:
-            grade = "D"
-        else:
-            grade = "E"
-        return grade, f"{probability_pct:.1f}% (conf {result.confidence:.2f})", "ниже — лучше"
+        metric, _details = _calculate_ai_signal_metric_result(
+            repo_id=self.current_repo.repo_id,
+            repo_path=repo_path,
+            git_backend=self.git_backend,
+            store=self.store,
+            use_cache=True,
+        )
+        return metric
 
     def _build_ai_authorship_use_case(self):
         calibration_path = resolve_authorship_calibration_path(
@@ -1613,6 +1541,7 @@ def _snapshot_payload_from_result(result: RepositoryRefreshResult) -> dict:
         "files_count": result.files_count,
         "loc": result.loc,
         "metrics": {name: list(values) for name, values in result.metrics.items()},
+        "metric_details": result.metric_details,
         "commits": [_commit_to_payload(commit) for commit in result.commits],
         "workspace_files": result.workspace_files,
         "workspace_diffs": result.workspace_diffs,
@@ -1633,6 +1562,9 @@ def _repository_result_from_snapshot(
     raw_metrics = payload.get("metrics") or {}
     if not isinstance(raw_metrics, dict):
         raw_metrics = {}
+    raw_metric_details = payload.get("metric_details") or {}
+    if not isinstance(raw_metric_details, dict):
+        raw_metric_details = {}
     raw_workspace_diffs = payload.get("workspace_diffs") or {}
     if not isinstance(raw_workspace_diffs, dict):
         raw_workspace_diffs = {}
@@ -1646,6 +1578,7 @@ def _repository_result_from_snapshot(
         str(name): _metric_tuple(values)
         for name, values in raw_metrics.items()
     }
+    metric_details = _metric_details_from_payload(raw_metric_details)
     commits = [
         _commit_from_payload(item)
         for item in (payload.get("commits") or [])
@@ -1673,6 +1606,7 @@ def _repository_result_from_snapshot(
         workspace_files=workspace_files,
         workspace_diffs=workspace_diffs,
         working_tree_message=None,
+        metric_details=metric_details,
     )
 
 
@@ -1771,6 +1705,27 @@ def _metric_tuple(values: object) -> tuple[str, str, str]:
     return grade, value, threshold
 
 
+def _metric_details_from_payload(payload: dict) -> MetricDetailsMap:
+    metric_details: MetricDetailsMap = {}
+    for metric_name, raw_items in payload.items():
+        if not isinstance(raw_items, list):
+            continue
+        details: list[MetricDetail] = []
+        for item in raw_items:
+            if not isinstance(item, dict):
+                continue
+            details.append(
+                {
+                    "location": str(item.get("location") or ""),
+                    "message": str(item.get("message") or ""),
+                    "severity": str(item.get("severity") or ""),
+                    "tool": str(item.get("tool") or ""),
+                }
+            )
+        metric_details[str(metric_name)] = details
+    return metric_details
+
+
 def _coerce_int(value: object, default: int = 0) -> int:
     try:
         return int(value)  # type: ignore[arg-type]
@@ -1867,6 +1822,133 @@ def _count_python_loc(git_backend: GitBackend, repo_path: Path, tracked_files: l
     return loc
 
 
+def _store_metric_details(
+    metric_details: MetricDetailsMap | None,
+    metric_name: str,
+    details: list[MetricDetail],
+) -> None:
+    if metric_details is not None:
+        metric_details[metric_name] = details
+
+
+def _issue_details(
+    issues: list[Issue],
+    limit: int = MAX_METRIC_DETAIL_ITEMS,
+    *,
+    preserve_order: bool = False,
+) -> list[MetricDetail]:
+    sorted_issues = list(issues) if preserve_order else sorted(
+        issues,
+        key=lambda issue: (issue.file or "", issue.line or 0, issue.message),
+    )
+    details = [
+        {
+            "location": _issue_location(issue),
+            "message": issue.message,
+            "severity": issue.severity,
+            "tool": issue.tool,
+        }
+        for issue in sorted_issues[:limit]
+    ]
+    return _with_limit_notice(details, len(sorted_issues), limit)
+
+
+def _issue_location(issue: Issue) -> str:
+    if issue.file and issue.line:
+        return f"{issue.file}:{issue.line}"
+    if issue.file:
+        return issue.file
+    return issue.tool
+
+
+def _with_limit_notice(details: list[MetricDetail], total: int, limit: int) -> list[MetricDetail]:
+    if total <= limit:
+        return details
+    return [
+        *details,
+        {
+            "location": "…",
+            "message": f"Показаны первые {limit} из {total} результатов.",
+            "severity": "info",
+            "tool": "",
+        },
+    ]
+
+
+def _rank_from_issue(issue: Issue) -> str:
+    match = re.search(r"\(rank\s+([A-F])\)", issue.message)
+    return match.group(1) if match else ""
+
+
+def _complexity_details(radon_issues: list[Issue]) -> list[MetricDetail]:
+    complexity_issues = [issue for issue in radon_issues if "has complexity" in issue.message]
+    ranked_issues = [
+        issue
+        for issue in complexity_issues
+        if _rank_from_issue(issue) in {"B", "C", "D", "E", "F"}
+    ]
+    if ranked_issues:
+        return _issue_details(ranked_issues)
+    return _issue_details([issue for issue in radon_issues if issue.severity == "error"])
+
+
+def _maintainability_details(radon_issues: list[Issue]) -> list[MetricDetail]:
+    mi_issues = [issue for issue in radon_issues if issue.message.startswith("Maintainability index is")]
+    sorted_issues = sorted(mi_issues, key=lambda issue: _first_float(issue.message))
+    if not sorted_issues:
+        return _issue_details([issue for issue in radon_issues if issue.severity == "error"])
+    return _issue_details(sorted_issues, preserve_order=True)
+
+
+def _first_float(text: str) -> float:
+    match = re.search(r"([0-9]+(?:\.[0-9]+)?)", text)
+    return float(match.group(1)) if match else 0.0
+
+
+def _duplication_details(duplication: DuplicationResult) -> list[MetricDetail]:
+    details: list[MetricDetail] = []
+    for index, duplicate_block in enumerate(duplication.duplicate_blocks[:MAX_METRIC_DETAIL_ITEMS], start=1):
+        locations = [
+            f"{location.file}:{location.line}"
+            for location in duplicate_block.locations
+        ]
+        location_text = ", ".join(locations[:6])
+        if len(locations) > 6:
+            location_text = f"{location_text}, …"
+        preview = duplicate_block.preview.replace("\n", " / ")
+        details.append(
+            {
+                "location": location_text or f"duplicate block {index}",
+                "message": f"Повторяющийся фрагмент #{index}: {preview}",
+                "severity": "warning",
+                "tool": "duplication",
+            }
+        )
+    if duplication.duplicate_groups > len(details):
+        details.append(
+            {
+                "location": "…",
+                "message": f"Показаны первые {len(details)} из {duplication.duplicate_groups} групп дублей.",
+                "severity": "info",
+                "tool": "duplication",
+            }
+        )
+    return details
+
+
+def _test_details(tests: TestRunResult) -> list[MetricDetail]:
+    details = [
+        {
+            "location": failed_test,
+            "message": "Pytest failure",
+            "severity": "error",
+            "tool": "pytest",
+        }
+        for failed_test in tests.failed_tests[:MAX_METRIC_DETAIL_ITEMS]
+    ]
+    return _with_limit_notice(details, len(tests.failed_tests), MAX_METRIC_DETAIL_ITEMS)
+
+
 def _calculate_quality_metrics(
     repo_id: int,
     repo_path: Path,
@@ -1876,20 +1958,22 @@ def _calculate_quality_metrics(
     store: SqliteStore,
     tracked_files: list[str] | None = None,
     tests: TestRunResult | None = None,
-    on_metric_result: Callable[[str, tuple[str, str, str]], None] | None = None,
+    metric_details: MetricDetailsMap | None = None,
+    on_metric_result: Callable[[str, MetricValue], None] | None = None,
     on_test_result: Callable[[str, str], None] | None = None,
     on_tests_finished: Callable[[TestRunResult], None] | None = None,
     use_cache: bool = True,
-) -> dict[str, tuple[str, str, str]]:
+) -> dict[str, MetricValue]:
     kloc = max(loc / 1000.0, 0.001)
-    metrics: dict[str, tuple[str, str, str]] = {}
+    metrics: dict[str, MetricValue] = {}
 
     def publish(metric_name: str) -> None:
         if on_metric_result:
             on_metric_result(metric_name, metrics[metric_name])
 
     ruff_issues = RuffRunner().run(repo_path)
-    lint_count = len([issue for issue in ruff_issues if issue.severity in {"warning", "error"}])
+    lint_issues = [issue for issue in ruff_issues if issue.severity in {"warning", "error"}]
+    lint_count = len(lint_issues)
     lint_per_kloc = lint_count / kloc
     lint_thr = thresholds["lint_issues_per_kloc"]
     metrics["lint"] = (
@@ -1897,10 +1981,12 @@ def _calculate_quality_metrics(
         f"{lint_count} ({lint_per_kloc:.1f}/KLOC)",
         _fmt_thresholds("<=", lint_thr),
     )
+    _store_metric_details(metric_details, "lint", _issue_details(lint_issues))
     publish("lint")
 
     mypy_issues = MypyRunner().run(repo_path)
-    mypy_errors = len([issue for issue in mypy_issues if issue.severity == "error"])
+    mypy_error_issues = [issue for issue in mypy_issues if issue.severity == "error"]
+    mypy_errors = len(mypy_error_issues)
     mypy_per_kloc = mypy_errors / kloc
     mypy_thr = thresholds["mypy_errors_per_kloc"]
     metrics["typing_health"] = (
@@ -1908,6 +1994,7 @@ def _calculate_quality_metrics(
         f"{mypy_errors} ({mypy_per_kloc:.1f}/KLOC)",
         _fmt_thresholds("<=", mypy_thr),
     )
+    _store_metric_details(metric_details, "typing_health", _issue_details(mypy_error_issues))
     publish("typing_health")
 
     radon_issues = RadonRunner().run(repo_path)
@@ -1924,6 +2011,7 @@ def _calculate_quality_metrics(
         )
     else:
         metrics["complexity"] = ("—", "n/a", "нет данных radon")
+    _store_metric_details(metric_details, "complexity", _complexity_details(radon_issues))
     publish("complexity")
 
     maintainability_values = _extract_values(radon_issues, r"Maintainability index is\s+([0-9]+(?:\.[0-9]+)?)")
@@ -1937,10 +2025,12 @@ def _calculate_quality_metrics(
         )
     else:
         metrics["maintainability"] = ("—", "n/a", "нет данных radon")
+    _store_metric_details(metric_details, "maintainability", _maintainability_details(radon_issues))
     publish("maintainability")
 
     dead_code_issues = VultureRunner().run(repo_path, tracked_files=tracked_files)
-    dead_code_count = len([issue for issue in dead_code_issues if issue.severity in {"warning", "error"}])
+    dead_code_findings = [issue for issue in dead_code_issues if issue.severity in {"warning", "error"}]
+    dead_code_count = len(dead_code_findings)
     dead_code_per_kloc = dead_code_count / kloc
     dead_thr = thresholds["dead_code_findings_per_kloc"]
     metrics["dead_code"] = (
@@ -1948,6 +2038,7 @@ def _calculate_quality_metrics(
         f"{dead_code_count} ({dead_code_per_kloc:.1f}/KLOC)",
         _fmt_thresholds("<=", dead_thr),
     )
+    _store_metric_details(metric_details, "dead_code", _issue_details(dead_code_findings))
     publish("dead_code")
 
     duplication = DuplicationRunner().run(repo_path, tracked_files=tracked_files)
@@ -1957,8 +2048,11 @@ def _calculate_quality_metrics(
         f"{duplication.duplication_pct:.1f}% ({duplication.duplicate_groups} групп)",
         _fmt_thresholds("<=", dup_thr),
     )
+    _store_metric_details(metric_details, "duplication", _duplication_details(duplication))
     publish("duplication")
-    metrics["ai_signal"] = _calculate_ai_signal_metric(repo_id, repo_path, git_backend, store, use_cache=use_cache)
+    ai_metric, ai_details = _calculate_ai_signal_metric_result(repo_id, repo_path, git_backend, store, use_cache=use_cache)
+    metrics["ai_signal"] = ai_metric
+    _store_metric_details(metric_details, "ai_signal", ai_details)
     publish("ai_signal")
 
     if tests is None:
@@ -1975,6 +2069,7 @@ def _calculate_quality_metrics(
         )
     else:
         metrics["tests"] = ("—", "n/a", "нет данных тестов")
+    _store_metric_details(metric_details, "tests", _test_details(tests))
     publish("tests")
 
     return metrics
@@ -1987,6 +2082,17 @@ def _calculate_ai_signal_metric(
     store: SqliteStore,
     use_cache: bool = True,
 ) -> tuple[str, str, str]:
+    metric, _details = _calculate_ai_signal_metric_result(repo_id, repo_path, git_backend, store, use_cache=use_cache)
+    return metric
+
+
+def _calculate_ai_signal_metric_result(
+    repo_id: int,
+    repo_path: Path,
+    git_backend: GitBackend,
+    store: SqliteStore,
+    use_cache: bool = True,
+) -> tuple[MetricValue, list[MetricDetail]]:
     try:
         result = _build_ai_authorship_use_case(git_backend, store).execute(
             repo_id=repo_id,
@@ -1994,8 +2100,19 @@ def _calculate_ai_signal_metric(
             scope="working_tree",
             use_cache=use_cache,
         )
-    except Exception:
-        return "—", "n/a", "нет данных AIAuthorship"
+    except Exception as error:
+        return (
+            "—",
+            "n/a",
+            "нет данных AIAuthorship",
+        ), [
+            {
+                "location": "AIAuthorship",
+                "message": str(error) or "AI authorship analysis is unavailable.",
+                "severity": "error",
+                "tool": "ai-authorship",
+            }
+        ]
 
     probability_pct = result.probability * 100.0
     if probability_pct < 20:
@@ -2008,7 +2125,25 @@ def _calculate_ai_signal_metric(
         grade = "D"
     else:
         grade = "E"
-    return grade, f"{probability_pct:.1f}% (conf {result.confidence:.2f})", "ниже — лучше"
+    metric = grade, f"{probability_pct:.1f}% (conf {result.confidence:.2f})", "ниже — лучше"
+    details: list[MetricDetail] = [
+        {
+            "location": result.scope,
+            "message": f"Probability {probability_pct:.1f}%, confidence {result.confidence:.2f}. {result.model_info}",
+            "severity": "info",
+            "tool": "ai-authorship",
+        }
+    ]
+    for signal in result.top_signals[:MAX_METRIC_DETAIL_ITEMS - 1]:
+        details.append(
+            {
+                "location": signal.name,
+                "message": f"value={signal.value:.4g}, weight={signal.weight:.4g}. {signal.description}",
+                "severity": signal.direction,
+                "tool": "ai-authorship",
+            }
+        )
+    return metric, details
 
 
 def _build_ai_authorship_use_case(git_backend: GitBackend, store: SqliteStore) -> DetectAIAuthorshipUseCase:

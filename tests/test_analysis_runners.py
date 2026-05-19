@@ -122,3 +122,17 @@ def test_duplication_runner_scans_only_selected_python_files(tmp_path) -> None:
 
     assert result.duplicate_groups == 0
     assert result.duplication_pct == 0.0
+
+
+def test_duplication_runner_reports_duplicate_locations(tmp_path) -> None:
+    duplicate_block = "\n".join(f"value_{index} = {index}" for index in range(6))
+    (tmp_path / "first.py").write_text(f"{duplicate_block}\n", encoding="utf-8")
+    (tmp_path / "second.py").write_text(f"\n{duplicate_block}\n", encoding="utf-8")
+
+    result = DuplicationRunner().run(tmp_path, tracked_files=["first.py", "second.py"])
+
+    assert result.duplicate_groups >= 1
+    assert result.duplicate_blocks
+    locations = {(location.file, location.line) for location in result.duplicate_blocks[0].locations}
+    assert ("first.py", 1) in locations
+    assert ("second.py", 2) in locations
