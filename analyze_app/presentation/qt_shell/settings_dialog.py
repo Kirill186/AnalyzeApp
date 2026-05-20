@@ -22,7 +22,7 @@ from analyze_app.presentation.qt_shell.state_store import AISettings, DEFAULT_QU
 QUALITY_FIELDS: list[tuple[str, str]] = [
     ("lint_issues_per_kloc", "Линт (ruff issues / KLOC)"),
     ("mypy_errors_per_kloc", "Типы (mypy errors / KLOC)"),
-    ("tests_failed_rate_pct", "Тесты (доля failed, %)"),
+    ("tests_passed_rate_pct", "Тесты (доля passed, %)"),
     ("complexity_b_plus_share_pct", "Сложность (доля B+ блоков, %)"),
     ("maintainability_avg_mi", "Поддержка (средний MI)"),
     ("dead_code_findings_per_kloc", "Мёртвый код (findings / KLOC)"),

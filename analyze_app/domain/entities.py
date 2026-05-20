@@ -52,6 +52,8 @@ class TestRunResult:
     skipped: int = 0
     duration_sec: float = 0.0
     failed_tests: list[str] = field(default_factory=list)
+    failed_reasons: dict[str, str] = field(default_factory=dict)
+    not_run_reason: str = ""
 
 
 @dataclass(slots=True)

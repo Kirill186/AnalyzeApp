@@ -12,7 +12,7 @@ from analyze_app.shared.config import DEFAULT_CONFIG
 DEFAULT_QUALITY_THRESHOLDS: dict[str, list[float]] = {
     "lint_issues_per_kloc": [2.0, 6.0, 12.0, 20.0],
     "mypy_errors_per_kloc": [0.0, 1.0, 3.0, 6.0],
-    "tests_failed_rate_pct": [0.0, 2.0, 5.0, 10.0],
+    "tests_passed_rate_pct": [100.0, 98.0, 95.0, 90.0],
     "complexity_b_plus_share_pct": [5.0, 10.0, 20.0, 35.0],
     "maintainability_avg_mi": [85.0, 75.0, 65.0, 50.0],
     "dead_code_findings_per_kloc": [1.0, 3.0, 6.0, 10.0],

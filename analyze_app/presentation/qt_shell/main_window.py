@@ -50,6 +50,7 @@ from analyze_app.infrastructure.ai.factory import build_diff_ai_backend, build_p
 from analyze_app.infrastructure.analysis.duplication_runner import DuplicationRunner
 from analyze_app.infrastructure.analysis.map.ast_map_builder import AstMapBuilder
 from analyze_app.infrastructure.analysis.mypy_runner import MypyRunner
+from analyze_app.infrastructure.analysis.python_environment import ManagedPythonEnvironment
 from analyze_app.infrastructure.analysis.pytest_runner import PytestRunner
 from analyze_app.infrastructure.analysis.radon_runner import RadonRunner
 from analyze_app.infrastructure.analysis.ruff_runner import RuffRunner
@@ -69,6 +70,7 @@ from analyze_app.shared.config import AppConfig, DEFAULT_CONFIG
 COMMIT_HISTORY_LIMIT = 300
 WORKSPACE_TEXT_LIMIT = 300_000
 MAX_METRIC_DETAIL_ITEMS = 80
+SNAPSHOT_SCHEMA_VERSION = 4
 
 MetricValue = tuple[str, str, str]
 MetricDetail = dict[str, str]
@@ -160,6 +162,7 @@ class RepositoryRefreshWorker(QObject):
         store: DatabaseStore,
         thresholds: dict[str, list[float]],
         ai_config: AppConfig,
+        install_python_dependencies: bool,
     ) -> None:
         super().__init__()
         self.repo = repo
@@ -167,6 +170,7 @@ class RepositoryRefreshWorker(QObject):
         self.store = store
         self.thresholds = thresholds
         self.ai_config = ai_config
+        self.install_python_dependencies = install_python_dependencies
 
     @Slot()
     def run(self) -> None:
@@ -199,6 +203,7 @@ class RepositoryRefreshWorker(QObject):
             on_test_result=self._emit_test_progress,
             on_tests_finished=tests_results.append,
             use_cache=False,
+            install_python_dependencies=self.install_python_dependencies,
         )
         tests = tests_results[0] if tests_results else TestRunResult()
 
@@ -207,7 +212,7 @@ class RepositoryRefreshWorker(QObject):
         use_case = WorkingTreeReportUseCase(
             self.git_backend,
             RuffRunner(),
-            PytestRunner(),
+            PytestRunner(install_dependencies=self.install_python_dependencies),
             build_diff_ai_backend(self.ai_config),
             self.store,
         )
@@ -609,11 +614,13 @@ class MainWindow(QMainWindow):
             return
 
         payload = self.store.load_repository_analysis_snapshot(self.current_repo.repo_id)
-        if payload:
+        if payload and _is_supported_repository_snapshot(payload):
             result = _repository_result_from_snapshot(self.current_repo, payload, self.store)
             self._apply_repository_result(result, update_summary=True)
             self.status.showMessage(f"Loaded saved analysis: {self.current_repo.title}", 4_000)
             return
+        if payload:
+            self.status.showMessage(f"Saved analysis is outdated: {self.current_repo.title}. Run Refresh.", 5_000)
 
         cached_overview = self.store.load_project_overview(self.current_repo.repo_id)
         summary = cached_overview[0] if cached_overview else "Описание пока не сгенерировано. Нажмите Regenerate."
@@ -773,15 +780,24 @@ class MainWindow(QMainWindow):
     def _delete_repository(self, repo_id: int) -> None:
         repos = [repo for repo in self._current_repo_items() if repo.repo_id == repo_id]
         title = repos[0].title if repos else f"#{repo_id}"
+        repo_path = Path(repos[0].working_path) if repos else None
         reply = QMessageBox.question(
             self,
             "Remove repository",
-            f"Remove '{title}' from AnalyzeApp? Files on disk will not be deleted.",
+            f"Remove '{title}' from AnalyzeApp? Repository files on disk will not be deleted. Managed Python env will be removed.",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
         )
         if reply != QMessageBox.StandardButton.Yes:
             return
+
+        removed_env = False
+        if repo_path is not None:
+            try:
+                removed_env = ManagedPythonEnvironment().delete_for_repo(repo_path)
+            except Exception as error:  # noqa: BLE001
+                QMessageBox.warning(self, "Remove repository", f"Could not remove managed Python env: {error}")
+                return
 
         self.store.delete_repository(repo_id)
         self.state_store.remove_repository(repo_id)
@@ -789,7 +805,8 @@ class MainWindow(QMainWindow):
             self.current_repo = None
             self._clear_tabs()
         self._load_repositories()
-        self.status.showMessage(f"Repository removed: {title}", 5_000)
+        suffix = " Managed Python env removed." if removed_env else ""
+        self.status.showMessage(f"Repository removed: {title}.{suffix}", 5_000)
 
     def _clear_tabs(self) -> None:
         self.tabs.overview_tab.reset()
@@ -849,6 +866,7 @@ class MainWindow(QMainWindow):
             self.status.showMessage(f"Analysis queued: {repo.title}", 4_000)
             return False
 
+        install_python_dependencies = self._confirm_python_dependency_install(repo)
         self.active_refresh_repo_id = repo.repo_id
         self.refresh_thread = QThread(self)
         self.refresh_worker = RepositoryRefreshWorker(
@@ -857,6 +875,7 @@ class MainWindow(QMainWindow):
             store=self.store,
             thresholds=self.state_store.quality_thresholds(),
             ai_config=self._ai_config(),
+            install_python_dependencies=install_python_dependencies,
         )
         self.refresh_worker.moveToThread(self.refresh_thread)
 
@@ -870,6 +889,35 @@ class MainWindow(QMainWindow):
         self.refresh_thread.finished.connect(self._cleanup_refresh_worker)
         self.refresh_thread.start()
         return True
+
+    def _confirm_python_dependency_install(self, repo: RepoListItemVM) -> bool:
+        try:
+            plan = ManagedPythonEnvironment().dependency_install_plan(Path(repo.working_path))
+        except Exception as error:  # noqa: BLE001
+            self.status.showMessage(f"Python dependency check failed: {error}", 6_000)
+            return False
+        if plan is None:
+            return True
+
+        dependencies = "\n".join(f"- {item}" for item in plan.dependencies[:18])
+        if len(plan.dependencies) > 18:
+            dependencies = f"{dependencies}\n- ... and {len(plan.dependencies) - 18} more"
+        if not dependencies:
+            dependencies = "\n".join(f"- {path.name}" for path in plan.manifests)
+
+        reply = QMessageBox.question(
+            self,
+            "Install Python dependencies?",
+            (
+                f"Pytest for '{repo.title}' needs a managed Python environment.\n\n"
+                f"Install these dependencies into:\n{plan.env_path}\n\n"
+                f"{dependencies}\n\n"
+                "If you choose No, pytest will be marked as not run for this repository."
+            ),
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.Yes,
+        )
+        return reply == QMessageBox.StandardButton.Yes
 
     def _queue_repository_refresh(self, repo: RepoListItemVM) -> None:
         if repo.repo_id == self.active_refresh_repo_id:
@@ -980,7 +1028,13 @@ class MainWindow(QMainWindow):
         summary = cached_overview[0] if cached_overview else "Описание пока не сгенерировано. Нажмите Regenerate."
         self.tabs.overview_tab.update_project_info(self.current_repo.title, len(tracked_files), loc, summary)
         metric_details: MetricDetailsMap = {}
-        metrics = self._calculate_quality_metrics(repo_path, loc, tracked_files, metric_details=metric_details)
+        metrics = self._calculate_quality_metrics(
+            repo_path,
+            loc,
+            tracked_files,
+            metric_details=metric_details,
+            install_python_dependencies=self._confirm_python_dependency_install(self.current_repo),
+        )
         self.tabs.overview_tab.update_metrics(metrics, metric_details)
         self.tabs.overview_tab.load_readme(repo_path)
 
@@ -1000,6 +1054,7 @@ class MainWindow(QMainWindow):
         loc: int,
         tracked_files: list[str] | None = None,
         metric_details: MetricDetailsMap | None = None,
+        install_python_dependencies: bool = True,
     ) -> dict[str, MetricValue]:
         if not self.current_repo:
             return {}
@@ -1012,6 +1067,7 @@ class MainWindow(QMainWindow):
             store=self.store,
             tracked_files=tracked_files,
             metric_details=metric_details,
+            install_python_dependencies=install_python_dependencies,
         )
 
     def _calculate_ai_signal_metric(self, repo_path: Path) -> tuple[str, str, str]:
@@ -1234,13 +1290,14 @@ class MainWindow(QMainWindow):
         if not self.current_repo:
             return
         repo_path = Path(self.current_repo.working_path)
+        install_python_dependencies = self._confirm_python_dependency_install(self.current_repo)
         status_lines = self.git_backend.status_porcelain(repo_path)
         file_rows = _parse_status_rows(status_lines)
 
         use_case = WorkingTreeReportUseCase(
             self.git_backend,
             RuffRunner(),
-            PytestRunner(),
+            PytestRunner(install_dependencies=install_python_dependencies),
             build_diff_ai_backend(self._ai_config()),
             self.store,
         )
@@ -1569,6 +1626,7 @@ def _trim_workspace_text(text: str) -> str:
 
 def _snapshot_payload_from_result(result: RepositoryRefreshResult) -> dict:
     payload = {
+        "schema_version": SNAPSHOT_SCHEMA_VERSION,
         "files_count": result.files_count,
         "loc": result.loc,
         "metrics": {name: list(values) for name, values in result.metrics.items()},
@@ -1581,6 +1639,10 @@ def _snapshot_payload_from_result(result: RepositoryRefreshResult) -> dict:
     if result.project_map is not None:
         payload["project_map"] = _project_map_to_payload(result.project_map)
     return payload
+
+
+def _is_supported_repository_snapshot(payload: dict) -> bool:
+    return _coerce_int(payload.get("schema_version")) == SNAPSHOT_SCHEMA_VERSION
 
 
 def _repository_result_from_snapshot(
@@ -1968,10 +2030,20 @@ def _duplication_details(duplication: DuplicationResult) -> list[MetricDetail]:
 
 
 def _test_details(tests: TestRunResult) -> list[MetricDetail]:
+    if tests.not_run_reason:
+        return [
+            {
+                "location": "pytest",
+                "message": tests.not_run_reason,
+                "severity": "info",
+                "tool": "pytest",
+            }
+        ]
+
     details = [
         {
             "location": failed_test,
-            "message": "Pytest failure",
+            "message": tests.failed_reasons.get(failed_test) or "Pytest failure",
             "severity": "error",
             "tool": "pytest",
         }
@@ -1994,6 +2066,7 @@ def _calculate_quality_metrics(
     on_test_result: Callable[[str, str], None] | None = None,
     on_tests_finished: Callable[[TestRunResult], None] | None = None,
     use_cache: bool = True,
+    install_python_dependencies: bool = True,
 ) -> dict[str, MetricValue]:
     kloc = max(loc / 1000.0, 0.001)
     metrics: dict[str, MetricValue] = {}
@@ -2087,17 +2160,22 @@ def _calculate_quality_metrics(
     publish("ai_signal")
 
     if tests is None:
-        tests = PytestRunner().run(repo_path, on_test_result=on_test_result)
+        tests = PytestRunner(install_dependencies=install_python_dependencies).run(
+            repo_path,
+            on_test_result=on_test_result,
+        )
     if on_tests_finished:
         on_tests_finished(tests)
     if tests.total > 0:
-        failed_rate = (tests.failed / tests.total) * 100.0
-        test_thr = thresholds["tests_failed_rate_pct"]
+        passed_rate = (tests.passed / tests.total) * 100.0
+        test_thr = thresholds["tests_passed_rate_pct"]
         metrics["tests"] = (
-            _grade_lower_better(failed_rate, test_thr),
-            f"{tests.failed}/{tests.total} ({failed_rate:.1f}%)",
-            _fmt_thresholds("<=", test_thr),
+            _grade_upper_better(passed_rate, test_thr),
+            f"{tests.passed}/{tests.total} ({passed_rate:.1f}%)",
+            _fmt_thresholds(">=", test_thr),
         )
+    elif tests.not_run_reason:
+        metrics["tests"] = ("—", "not run", "зависимости не установлены")
     else:
         metrics["tests"] = ("—", "n/a", "нет данных тестов")
     _store_metric_details(metric_details, "tests", _test_details(tests))

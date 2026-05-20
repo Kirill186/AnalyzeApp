@@ -21,6 +21,7 @@ def _env_int(name: str, default: int) -> int:
 class AppConfig:
     db_path: Path = Path(os.getenv("ANALYZE_APP_DB_PATH", ".analyze_app.sqlite3"))
     clone_root: Path = Path(os.getenv("ANALYZE_APP_CLONE_ROOT", "./.analyze_repos"))
+    python_env_root: Path = Path(os.getenv("ANALYZE_APP_PYTHON_ENV_ROOT", "./.analyze_python_envs"))
     llm_backend: str = os.getenv("ANALYZE_APP_LLM_BACKEND", "llama_cpp")
     llm_model_path: str = os.getenv("ANALYZE_APP_LLM_MODEL_PATH", "ollama://llama3.2:latest")
     llm_context_size: int = _env_int("ANALYZE_APP_LLM_CONTEXT_SIZE", 4096)

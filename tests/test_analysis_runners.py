@@ -1,11 +1,19 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 from analyze_app.infrastructure.analysis import pytest_runner, radon_runner, ruff_runner, vulture_runner
 from analyze_app.infrastructure.analysis.duplication_runner import DuplicationRunner
+from analyze_app.infrastructure.analysis.python_environment import (
+    ManagedPythonEnvironment,
+    PreparedPythonEnvironment,
+    PythonEnvironmentError,
+)
 from analyze_app.infrastructure.analysis.pytest_runner import PytestRunner
 from analyze_app.infrastructure.analysis.radon_runner import RadonRunner
 from analyze_app.infrastructure.analysis.ruff_runner import RuffRunner
@@ -85,6 +93,260 @@ def test_pytest_runner_streams_completed_tests(monkeypatch) -> None:
     assert result.passed == 1
     assert result.failed == 1
     assert "tests/test_sample.py::test_two" in result.failed_tests
+    assert result.failed_reasons["tests/test_sample.py::test_two"] == "Failed"
+
+
+def test_pytest_runner_uses_current_python_and_clears_addopts(monkeypatch) -> None:
+    lines = [
+        b"============================== 1 passed in 0.01s ==============================\n",
+    ]
+    captured: dict[str, object] = {}
+
+    class FakeProcess:
+        def __init__(self) -> None:
+            self.stdout = iter(lines)
+            self.returncode: int | None = None
+
+        def wait(self) -> int:
+            self.returncode = 0
+            return self.returncode
+
+    def fake_popen(command, *args, **kwargs):
+        captured["command"] = command
+        captured["env"] = kwargs.get("env", {})
+        return FakeProcess()
+
+    monkeypatch.setattr(pytest_runner.sys, "executable", "python-from-app")
+    monkeypatch.setenv("PYTEST_ADDOPTS", "--lf")
+    monkeypatch.setattr(pytest_runner.subprocess, "Popen", fake_popen)
+
+    result = PytestRunner().run(Path("."))
+
+    assert captured["command"][:3] == ["python-from-app", "-m", "pytest"]
+    assert captured["env"]["PYTEST_ADDOPTS"] == ""
+    assert result.total == 1
+    assert result.passed == 1
+
+
+def test_pytest_runner_counts_collection_errors_with_completed_tests(monkeypatch) -> None:
+    lines = [
+        b"tests/test_math.py::test_one PASSED [ 50%]\n",
+        b"E   ModuleNotFoundError: No module named 'playwright'\n",
+        b"=========================== short test summary info ===========================\n",
+        b"ERROR tests/test_ui.py\n",
+        b"========================= 1 passed, 1 error in 0.23s =========================\n",
+    ]
+
+    class FakeProcess:
+        def __init__(self) -> None:
+            self.stdout = iter(lines)
+            self.returncode: int | None = None
+
+        def wait(self) -> int:
+            self.returncode = 1
+            return self.returncode
+
+    monkeypatch.setattr(pytest_runner.subprocess, "Popen", lambda *args, **kwargs: FakeProcess())
+
+    result = PytestRunner().run(Path("."))
+
+    assert result.total == 2
+    assert result.passed == 1
+    assert result.failed == 1
+    assert "tests/test_ui.py" in result.failed_tests
+    assert result.failed_reasons["tests/test_ui.py"] == "ModuleNotFoundError: No module named 'playwright'"
+
+
+def test_pytest_runner_summary_ignores_collection_preamble_counts(monkeypatch) -> None:
+    lines = [
+        b"collecting ... collected 15 items / 1 error\n",
+        b"=========================== short test summary info ===========================\n",
+        b"ERROR tests/test_ui.py\n",
+        b"============================== 1 error in 0.43s ==============================\n",
+    ]
+
+    class FakeProcess:
+        def __init__(self) -> None:
+            self.stdout = iter(lines)
+            self.returncode: int | None = None
+
+        def wait(self) -> int:
+            self.returncode = 1
+            return self.returncode
+
+    monkeypatch.setattr(pytest_runner.subprocess, "Popen", lambda *args, **kwargs: FakeProcess())
+
+    result = PytestRunner().run(Path("."))
+
+    assert result.total == 1
+    assert result.failed == 1
+    assert result.failed_tests == ["tests/test_ui.py"]
+
+
+def test_pytest_runner_records_short_summary_failure_reason(monkeypatch) -> None:
+    lines = [
+        b"tests/test_api.py::test_duckduckgo_instant_answer_api FAILED [100%]\n",
+        b"=========================== short test summary info ===========================\n",
+        b"FAILED tests/test_api.py::test_duckduckgo_instant_answer_api - assert 202 == 200\n",
+        b"============================== 1 failed in 0.43s ==============================\n",
+    ]
+
+    class FakeProcess:
+        def __init__(self) -> None:
+            self.stdout = iter(lines)
+            self.returncode: int | None = None
+
+        def wait(self) -> int:
+            self.returncode = 1
+            return self.returncode
+
+    monkeypatch.setattr(pytest_runner.subprocess, "Popen", lambda *args, **kwargs: FakeProcess())
+
+    result = PytestRunner().run(Path("."))
+
+    nodeid = "tests/test_api.py::test_duckduckgo_instant_answer_api"
+    assert result.failed_tests == [nodeid]
+    assert result.failed_reasons[nodeid] == "assert 202 == 200"
+
+
+def test_pytest_runner_uses_managed_python_environment(monkeypatch, tmp_path) -> None:
+    repo_path = tmp_path / "repo"
+    repo_path.mkdir()
+    venv_python = tmp_path / "env" / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+    lines = [
+        b"============================== 1 passed in 0.01s ==============================\n",
+    ]
+    captured: dict[str, object] = {}
+
+    class FakeEnvironment:
+        def prepare(self, path: Path, *, install_dependencies: bool = True) -> PreparedPythonEnvironment:
+            assert path == repo_path
+            assert install_dependencies is True
+            return PreparedPythonEnvironment(venv_python, {"PATH": "managed"}, managed=True)
+
+    class FakeProcess:
+        def __init__(self) -> None:
+            self.stdout = iter(lines)
+            self.returncode: int | None = None
+
+        def wait(self) -> int:
+            self.returncode = 0
+            return self.returncode
+
+    def fake_popen(command, *args, **kwargs):
+        captured["command"] = command
+        captured["env"] = kwargs.get("env", {})
+        return FakeProcess()
+
+    monkeypatch.setattr(pytest_runner.subprocess, "Popen", fake_popen)
+
+    result = PytestRunner(python_environment=FakeEnvironment()).run(repo_path)
+
+    assert captured["command"][:3] == [str(venv_python), "-m", "pytest"]
+    assert captured["env"]["PATH"] == "managed"
+    assert captured["env"]["PYTEST_ADDOPTS"] == ""
+    assert result.total == 1
+    assert result.passed == 1
+
+
+def test_pytest_runner_reports_environment_setup_failure() -> None:
+    class FakeEnvironment:
+        def prepare(self, path: Path, *, install_dependencies: bool = True) -> PreparedPythonEnvironment:
+            raise PythonEnvironmentError("dependency install failed")
+
+    result = PytestRunner(python_environment=FakeEnvironment()).run(Path("."))
+
+    assert result.total == 0
+    assert result.failed == 0
+    assert result.failed_tests == []
+    assert result.not_run_reason == "dependency install failed"
+
+
+def test_managed_python_environment_installs_requirements_once(monkeypatch, tmp_path) -> None:
+    repo_path = tmp_path / "repo"
+    repo_path.mkdir()
+    (repo_path / "requirements.txt").write_text("pytest==7.3.1\nrequests==2.31.0\n", encoding="utf-8")
+    env_root = tmp_path / "envs"
+    commands: list[list[str]] = []
+
+    def fake_run(command, *args, **kwargs):
+        command = [str(part) for part in command]
+        commands.append(command)
+        if command[1:3] == ["-m", "venv"]:
+            env_path = Path(command[-1])
+            python_path = env_path / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+            python_path.parent.mkdir(parents=True, exist_ok=True)
+            python_path.write_text("", encoding="utf-8")
+        return SimpleNamespace(returncode=0, stdout=b"", stderr=b"")
+
+    monkeypatch.setattr(pytest_runner.sys, "executable", "python-from-app")
+    monkeypatch.setattr("analyze_app.infrastructure.analysis.python_environment.sys.executable", "python-from-app")
+    monkeypatch.setattr("analyze_app.infrastructure.analysis.python_environment.subprocess.run", fake_run)
+
+    environment = ManagedPythonEnvironment(env_root)
+    prepared = environment.prepare(repo_path)
+
+    assert prepared.managed is True
+    assert prepared.executable.exists()
+    assert any(command[1:4] == ["-m", "pip", "install"] and "-r" in command for command in commands)
+
+    commands.clear()
+    environment.prepare(repo_path)
+
+    assert commands == []
+
+
+def test_managed_python_environment_can_decline_dependency_install(monkeypatch, tmp_path) -> None:
+    repo_path = tmp_path / "repo"
+    repo_path.mkdir()
+    (repo_path / "requirements.txt").write_text("pytest==7.3.1\n", encoding="utf-8")
+    env_root = tmp_path / "envs"
+
+    def fake_run(command, *args, **kwargs):
+        command = [str(part) for part in command]
+        if command[1:3] == ["-m", "venv"]:
+            env_path = Path(command[-1])
+            python_path = env_path / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+            python_path.parent.mkdir(parents=True, exist_ok=True)
+            python_path.write_text("", encoding="utf-8")
+        return SimpleNamespace(returncode=0, stdout=b"", stderr=b"")
+
+    monkeypatch.setattr("analyze_app.infrastructure.analysis.python_environment.sys.executable", "python-from-app")
+    monkeypatch.setattr("analyze_app.infrastructure.analysis.python_environment.subprocess.run", fake_run)
+
+    environment = ManagedPythonEnvironment(env_root)
+    result = PytestRunner(python_environment=environment, install_dependencies=False).run(repo_path)
+
+    assert result.total == 0
+    assert result.failed == 0
+    assert result.not_run_reason.startswith("Dependency installation was declined")
+
+
+def test_managed_python_environment_delete_for_repo_removes_env(tmp_path) -> None:
+    repo_path = tmp_path / "repo"
+    repo_path.mkdir()
+    environment = ManagedPythonEnvironment(tmp_path / "envs")
+    env_path = environment._env_path(repo_path.resolve())
+    env_path.mkdir(parents=True)
+    (env_path / ".analyze_env.json").write_text("{}", encoding="utf-8")
+
+    assert environment.delete_for_repo(repo_path) is True
+    assert not env_path.exists()
+    assert environment.delete_for_repo(repo_path) is False
+
+
+def test_managed_python_environment_delete_refuses_outside_env_root(tmp_path, monkeypatch) -> None:
+    repo_path = tmp_path / "repo"
+    repo_path.mkdir()
+    outside_path = tmp_path / "outside-env"
+    outside_path.mkdir()
+    environment = ManagedPythonEnvironment(tmp_path / "envs")
+    monkeypatch.setattr(environment, "_env_path", lambda path: outside_path)
+
+    with pytest.raises(PythonEnvironmentError, match="outside"):
+        environment.delete_for_repo(repo_path)
+
+    assert outside_path.exists()
 
 
 def test_vulture_runner_scans_only_selected_python_files(monkeypatch, tmp_path) -> None:
