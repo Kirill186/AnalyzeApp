@@ -50,6 +50,7 @@ class RepoSidebar(QWidget):
     group_renamed = Signal(str, str)
     group_delete_requested = Signal(str)
     repo_selected = Signal(int)
+    repo_renamed = Signal(int, str)
     repo_delete_requested = Signal(int)
 
     def __init__(self, parent=None) -> None:
@@ -187,6 +188,7 @@ class RepoSidebar(QWidget):
             "Убрать из избранного" if repo.is_favorite else "Добавить в избранное"
         )
         refresh_action = menu.addAction("Обновить репозиторий")
+        rename_action = menu.addAction("Переименовать репозиторий")
         menu.addSeparator()
 
         group_menu = menu.addMenu("Переместить в группу")
@@ -209,6 +211,9 @@ class RepoSidebar(QWidget):
             return
         if action == refresh_action:
             self.refresh_repo_clicked.emit(repo.repo_id)
+            return
+        if action == rename_action:
+            self._prompt_rename_repo(repo)
             return
         if action == create_group_action:
             self._prompt_for_group(repo.repo_id)
@@ -258,6 +263,21 @@ class RepoSidebar(QWidget):
         if not new_group or new_group == "favorites" or new_group == group:
             return
         self.group_renamed.emit(group, new_group)
+
+    def _prompt_rename_repo(self, repo: RepoListItemVM) -> None:
+        repo_name, accepted = QInputDialog.getText(
+            self,
+            "Переименовать репозиторий",
+            "Название репозитория:",
+            QLineEdit.EchoMode.Normal,
+            repo.title,
+        )
+        if not accepted:
+            return
+        new_title = repo_name.strip()
+        if not new_title or new_title == repo.title:
+            return
+        self.repo_renamed.emit(repo.repo_id, new_title)
 
 
 class _RepoListWidget(QListWidget):

@@ -117,6 +117,10 @@ class OverviewTab(QWidget):
         self._state["loc"] = loc
         self._render()
 
+    def update_title(self, title: str) -> None:
+        self._state["title"] = title
+        self._render()
+
     def update_project_info(self, title: str, files_count: int | str, loc: int | str, summary: str) -> None:
         self._state["title"] = title
         self._state["filesCount"] = files_count

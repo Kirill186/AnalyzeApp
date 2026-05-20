@@ -79,15 +79,17 @@ MetricDetailsMap = dict[str, list[MetricDetail]]
 class ImportResult:
     repo_id: int
     repo_path: Path
+    display_name: str = ""
 
 
 class ImportRepositoryWorker(QObject):
     finished = Signal(object)
     failed = Signal(str)
 
-    def __init__(self, source: str, git_backend: GitBackend, store: DatabaseStore) -> None:
+    def __init__(self, source: str, display_name: str, git_backend: GitBackend, store: DatabaseStore) -> None:
         super().__init__()
         self.source = source
+        self.display_name = display_name
         self.git_backend = git_backend
         self.store = store
 
@@ -99,7 +101,7 @@ class ImportRepositoryWorker(QObject):
         except Exception as error:  # noqa: BLE001
             self.failed.emit(str(error))
             return
-        self.finished.emit(ImportResult(repo_id=repo_id, repo_path=repo_path))
+        self.finished.emit(ImportResult(repo_id=repo_id, repo_path=repo_path, display_name=self.display_name))
 
 
 @dataclass(slots=True)
@@ -434,6 +436,7 @@ class MainWindow(QMainWindow):
         self.sidebar.group_renamed.connect(self._rename_repository_group)
         self.sidebar.group_delete_requested.connect(self._delete_repository_group)
         self.sidebar.repo_selected.connect(self._on_repo_selected)
+        self.sidebar.repo_renamed.connect(self._rename_repository)
         self.sidebar.repo_delete_requested.connect(self._delete_repository)
 
         self.menu.add_repository.triggered.connect(self._add_repository)
@@ -500,11 +503,12 @@ class MainWindow(QMainWindow):
         items: list[RepoListItemVM] = []
         favorites = self.state_store.favorites()
         groups = self.state_store.repo_groups()
+        titles = self.state_store.repo_titles()
         for repo_id, origin_url, working_path, default_branch, _created_at in self.store.list_repositories():
             source_type = "remote" if origin_url.startswith("http") or origin_url.endswith(".git") else "local"
             group = _normalize_repo_group(groups.get(repo_id, source_type), source_type)
             is_favorite = repo_id in favorites
-            title = Path(working_path).name or origin_url
+            title = titles.get(repo_id) or Path(working_path).name or origin_url
             last_updated = self.git_backend.last_commit_at(Path(working_path))
             items.append(
                 RepoListItemVM(
@@ -547,16 +551,21 @@ class MainWindow(QMainWindow):
         dialog = RepoAddDialog(self)
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
-        self._start_repository_import(dialog.source)
+        self._start_repository_import(dialog.source, dialog.display_name)
 
-    def _start_repository_import(self, source: str) -> None:
+    def _start_repository_import(self, source: str, display_name: str = "") -> None:
         if self.import_thread is not None and self.import_thread.isRunning():
             self.status.showMessage("Repository import is already running.", 4_000)
             return
 
         self.status.showMessage("Repository import started in background.", 5_000)
         self.import_thread = QThread(self)
-        self.import_worker = ImportRepositoryWorker(source=source, git_backend=self.git_backend, store=self.store)
+        self.import_worker = ImportRepositoryWorker(
+            source=source,
+            display_name=display_name.strip(),
+            git_backend=self.git_backend,
+            store=self.store,
+        )
         self.import_worker.moveToThread(self.import_thread)
 
         self.import_thread.started.connect(self.import_worker.run)
@@ -569,6 +578,8 @@ class MainWindow(QMainWindow):
 
     @Slot(object)
     def _on_import_finished(self, result: ImportResult) -> None:
+        if result.display_name:
+            self.state_store.set_repo_title(result.repo_id, result.display_name)
         self.status.showMessage(f"Repository imported: {result.repo_path} (id={result.repo_id})", 5_000)
         self._load_repositories()
         self._on_repo_selected(result.repo_id)
@@ -688,6 +699,26 @@ class MainWindow(QMainWindow):
         self.state_store.set_repo_group_order(ordered)
         self._load_repositories()
         self._sync_current_repo()
+
+    def _rename_repository(self, repo_id: int, title: str) -> None:
+        new_title = title.strip()
+        if not new_title:
+            return
+
+        repos = [repo for repo in self._current_repo_items() if repo.repo_id == repo_id]
+        if not repos:
+            return
+
+        old_title = repos[0].title
+        if new_title == old_title:
+            return
+
+        self.state_store.set_repo_title(repo_id, new_title)
+        self._load_repositories()
+        self._sync_current_repo()
+        if self.current_repo and self.current_repo.repo_id == repo_id:
+            self.tabs.overview_tab.update_title(self.current_repo.title)
+        self.status.showMessage(f"Репозиторий переименован: {old_title} → {new_title}", 4_000)
 
     def _rename_repository_group(self, old_group: str, new_group: str) -> None:
         old_group = _normalize_repo_group(old_group, "")

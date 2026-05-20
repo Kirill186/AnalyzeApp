@@ -75,6 +75,30 @@ class UiStateStore:
     def set_repo_group_order(self, groups: list[str]) -> None:
         self.settings.setValue("repo_group_order", _coerce_str_list(groups))
 
+    def repo_titles(self) -> dict[int, str]:
+        raw = self.settings.value("repo_titles", {})
+        if isinstance(raw, dict):
+            titles: dict[int, str] = {}
+            for key, value in raw.items():
+                try:
+                    repo_id = int(key)
+                except (TypeError, ValueError):
+                    continue
+                title = str(value).strip()
+                if title:
+                    titles[repo_id] = title
+            return titles
+        return {}
+
+    def set_repo_title(self, repo_id: int, title: str) -> None:
+        titles = self.repo_titles()
+        cleaned_title = title.strip()
+        if cleaned_title:
+            titles[repo_id] = cleaned_title
+        else:
+            titles.pop(repo_id, None)
+        self.settings.setValue("repo_titles", titles)
+
     def repo_groups(self) -> dict[int, str]:
         raw = self.settings.value("repo_groups", {})
         if isinstance(raw, dict):
@@ -166,6 +190,10 @@ class UiStateStore:
         favorites = self.favorites()
         favorites.discard(repo_id)
         self.set_favorites(favorites)
+
+        titles = self.repo_titles()
+        titles.pop(repo_id, None)
+        self.settings.setValue("repo_titles", titles)
 
     def quality_thresholds(self) -> dict[str, list[float]]:
         raw = self.settings.value("quality_thresholds", {})

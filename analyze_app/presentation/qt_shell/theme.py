@@ -80,6 +80,25 @@ QLineEdit:disabled, QTextEdit:disabled, QPlainTextEdit:disabled, QComboBox:disab
     color: #7F8EAD;
     border-color: #2A3755;
 }
+QComboBox QAbstractItemView {
+    background: #121A2B;
+    color: #E6ECFF;
+    border: 1px solid #2A3755;
+    selection-background-color: #5B8CFF;
+    selection-color: #F4F7FF;
+    outline: none;
+}
+QComboBox QAbstractItemView::item {
+    min-height: 28px;
+    padding: 6px 8px;
+}
+QComboBox QAbstractItemView::item:hover {
+    background: #24314C;
+}
+QComboBox QAbstractItemView::item:selected {
+    background: #5B8CFF;
+    color: #F4F7FF;
+}
 QSpinBox::up-button, QSpinBox::down-button, QDoubleSpinBox::up-button, QDoubleSpinBox::down-button {
     background: #24314C;
     border: none;
@@ -113,4 +132,5 @@ def apply_theme(app: QApplication) -> None:
     palette.setColor(QPalette.Button, QColor("#1A2438"))
     palette.setColor(QPalette.ButtonText, QColor("#E6ECFF"))
     palette.setColor(QPalette.Highlight, QColor("#5B8CFF"))
+    palette.setColor(QPalette.HighlightedText, QColor("#F4F7FF"))
     app.setPalette(palette)
