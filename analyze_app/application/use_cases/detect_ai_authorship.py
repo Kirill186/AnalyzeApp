@@ -63,13 +63,13 @@ class DetectAIAuthorshipUseCase:
         else:
             raw_probability = self.model_runtime.predict_probability(features)
         calibrated_probability = self.calibrator.calibrate(raw_probability)
-        confidence = self._confidence(source_features, len(source_blobs))
+        data_sufficiency = self._data_sufficiency(source_features, len(source_blobs))
         signals = self.model_runtime.explain(features)
 
         result = AIAuthorshipResult(
             scope=scope,
             probability=round(calibrated_probability, 4),
-            confidence=round(confidence, 4),
+            data_sufficiency=round(data_sufficiency, 4),
             top_signals=signals,
             calibration_version=self.calibrator.version,
             model_info=(
@@ -243,7 +243,7 @@ class DetectAIAuthorshipUseCase:
         return {key: sum(features.get(key, 0.0) for features in extracted) / len(extracted) for key in keys}
 
     @staticmethod
-    def _confidence(features: dict[str, float], files_count: int) -> float:
+    def _data_sufficiency(features: dict[str, float], files_count: int) -> float:
         line_count = max(features.get("line_count", 0.0), 0.0)
         syntax_error_penalty = 0.4 if features.get("syntax_error", 0.0) > 0 else 0.0
         base = min(1.0, (line_count / 200.0) + (files_count / 10.0))

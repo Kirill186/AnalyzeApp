@@ -196,7 +196,7 @@ analyze_app/
      - файла;
      - набора изменений (commit / working tree);
      - проекта (агрегатно, опционально).
-   - возвращает вероятности + признаки + confidence + предупреждение об ограничениях.
+   - возвращает вероятности + признаки + достаточность данных + предупреждение об ограничениях.
 
 ---
 
@@ -215,7 +215,7 @@ analyze_app/
 
 ### AI
 - `LLMResult(summary, per_file_summary, risks, recommendations, tags, evidence, model_info)`
-- `AIAuthorshipResult(scope, probability, confidence, top_signals, calibration_version, model_info, disclaimer)`
+- `AIAuthorshipResult(scope, probability, data_sufficiency, top_signals, calibration_version, model_info, disclaimer)`
 
 ### Граф
 - `ProjectGraph(nodes, edges, hotspots, symbols_index)`

@@ -32,7 +32,7 @@ class OverviewTab(QWidget):
         ("maintainability", "Поддержка"),
         ("dead_code", "Мертвый код"),
         ("duplication", "Дубли"),
-        ("ai_signal", "AI-сигнал"),
+        ("ai_signal", "AI-оценка"),
         ("tests", "Тесты"),
     ]
 

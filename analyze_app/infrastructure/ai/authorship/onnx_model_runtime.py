@@ -75,7 +75,7 @@ class OnnxModelRuntime:
             ("avg_line_length", "increase", "Long uniform lines can contribute to AI-likeness."),
             ("branch_count", "decrease", "More branch structure can look less template-like."),
             ("ast_depth", "decrease", "Deeper syntax trees can indicate more hand-shaped control flow."),
-            ("syntax_error", "increase", "Syntax errors lower confidence and can distort authorship estimates."),
+            ("syntax_error", "increase", "Syntax errors lower data sufficiency and can distort authorship estimates."),
         ]
         ranked = sorted(signal_specs, key=lambda item: abs(float(features.get(item[0], 0.0))), reverse=True)
         signals: list[AIAuthorshipSignal] = []

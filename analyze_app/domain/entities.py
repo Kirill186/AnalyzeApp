@@ -88,7 +88,7 @@ class AIAuthorshipSignal:
 class AIAuthorshipResult:
     scope: str
     probability: float
-    confidence: float
+    data_sufficiency: float
     top_signals: list[AIAuthorshipSignal]
     calibration_version: str
     model_info: str

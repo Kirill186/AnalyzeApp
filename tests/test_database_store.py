@@ -103,7 +103,7 @@ def test_store_round_trips_reports_and_json_payloads(tmp_path) -> None:
         AIAuthorshipResult(
             scope="working_tree",
             probability=0.12,
-            confidence=0.8,
+            data_sufficiency=0.8,
             top_signals=[
                 AIAuthorshipSignal(
                     name="line_count",
@@ -120,6 +120,7 @@ def test_store_round_trips_reports_and_json_payloads(tmp_path) -> None:
     )
     cached_authorship = store.load_ai_authorship(repo_id, "working_tree:v1:hash")
     assert cached_authorship is not None
+    assert cached_authorship.data_sufficiency == 0.8
     assert cached_authorship.top_signals[0].name == "line_count"
 
 

@@ -71,7 +71,7 @@ def test_cached_ai_authorship_result_is_invalidated_when_calibration_changes() -
     cached = AIAuthorshipResult(
         scope="working_tree",
         probability=0.99,
-        confidence=0.99,
+        data_sufficiency=0.99,
         top_signals=[],
         calibration_version="old-calibration",
         model_info="fake-model (dataset=fake-dataset)",

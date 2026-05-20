@@ -158,6 +158,7 @@ class AIAuthorshipCacheModel(Base):
     scope_key: Mapped[str] = mapped_column(Text, primary_key=True)
     scope: Mapped[str] = mapped_column(Text, nullable=False)
     probability: Mapped[float] = mapped_column(Float, nullable=False)
+    # Keep the legacy SQLite column name for existing caches; the domain term is data_sufficiency.
     confidence: Mapped[float] = mapped_column(Float, nullable=False)
     top_signals_json: Mapped[list[dict[str, Any]]] = mapped_column(JSON, nullable=False)
     calibration_version: Mapped[str] = mapped_column(Text, nullable=False)
@@ -557,7 +558,7 @@ class DatabaseStore:
             "scope_key": scope_key,
             "scope": result.scope,
             "probability": result.probability,
-            "confidence": result.confidence,
+            "confidence": result.data_sufficiency,
             "top_signals_json": [asdict(signal) for signal in result.top_signals],
             "calibration_version": result.calibration_version,
             "model_info": result.model_info,
@@ -583,7 +584,7 @@ class DatabaseStore:
             return AIAuthorshipResult(
                 scope=row.scope,
                 probability=float(row.probability),
-                confidence=float(row.confidence),
+                data_sufficiency=float(row.confidence),
                 top_signals=signals,
                 calibration_version=row.calibration_version,
                 model_info=row.model_info,

@@ -151,7 +151,7 @@ def cmd_ai_authorship(args: argparse.Namespace) -> None:
     )
     print(f"scope: {result.scope}")
     print(f"probability: {result.probability:.4f}")
-    print(f"confidence: {result.confidence:.4f}")
+    print(f"data_sufficiency: {result.data_sufficiency:.4f}")
     print(f"model: {result.model_info}")
     print(f"calibration: {result.calibration_version}")
     print("top_signals:")

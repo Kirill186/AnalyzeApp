@@ -2213,11 +2213,11 @@ def _calculate_ai_signal_metric_result(
         return (
             "—",
             "n/a",
-            "нет данных AIAuthorship",
+            "нет данных AI-оценки",
         ), [
             {
                 "location": "AIAuthorship",
-                "message": str(error) or "AI authorship analysis is unavailable.",
+                "message": str(error) or "AI-оценка недоступна.",
                 "severity": "error",
                 "tool": "ai-authorship",
             }
@@ -2234,11 +2234,14 @@ def _calculate_ai_signal_metric_result(
         grade = "D"
     else:
         grade = "E"
-    metric = grade, f"{probability_pct:.1f}% (conf {result.confidence:.2f})", "ниже — лучше"
+    metric = grade, f"{probability_pct:.1f}% (данные {result.data_sufficiency:.2f})", "ниже — лучше"
     details: list[MetricDetail] = [
         {
             "location": result.scope,
-            "message": f"Probability {probability_pct:.1f}%, confidence {result.confidence:.2f}. {result.model_info}",
+            "message": (
+                f"Вероятность {probability_pct:.1f}%, "
+                f"достаточность данных {result.data_sufficiency:.2f}. {result.model_info}"
+            ),
             "severity": "info",
             "tool": "ai-authorship",
         }

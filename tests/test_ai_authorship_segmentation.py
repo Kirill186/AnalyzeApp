@@ -110,7 +110,7 @@ def test_model_receives_solution_like_chunks_instead_of_whole_file() -> None:
     result = use_case.execute(1, Path("."), "working_tree", use_cache=False)
 
     assert len(runtime.code_blobs) == 4
-    assert result.confidence == 0.155
+    assert result.data_sufficiency == 0.155
     assert any(blob.startswith("class Service:\n    def add") for blob in runtime.code_blobs)
     assert any(blob.startswith("class Service:\n    def remove") for blob in runtime.code_blobs)
     assert any(blob.startswith("def top_level") for blob in runtime.code_blobs)
