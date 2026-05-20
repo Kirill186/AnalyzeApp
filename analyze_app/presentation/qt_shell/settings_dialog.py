@@ -4,6 +4,7 @@ from dataclasses import dataclass
 
 from PySide6.QtWidgets import (
     QComboBox,
+    QCheckBox,
     QDialog,
     QDialogButtonBox,
     QDoubleSpinBox,
@@ -258,6 +259,23 @@ class AISettingsDialog(QDialog):
 
         root.addWidget(group)
 
+        authorship_group = QGroupBox("AI-оценка кода")
+        authorship_layout = QVBoxLayout(authorship_group)
+        self.use_solution_chunks = QCheckBox("Делить код на solution-like куски")
+        self.use_solution_chunks.setChecked(current.use_solution_chunks)
+        self.use_solution_chunks.setToolTip(
+            "Если выключить, AI-оценка будет передавать модели целые .py файлы."
+        )
+        authorship_layout.addWidget(self.use_solution_chunks)
+
+        authorship_hint = QLabel(
+            "Включённый режим лучше изолирует функции и методы. "
+            "Выключенный режим оценивает каждый Python-файл целиком."
+        )
+        authorship_hint.setWordWrap(True)
+        authorship_layout.addWidget(authorship_hint)
+        root.addWidget(authorship_group)
+
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
         buttons.accepted.connect(self._accept)
         buttons.rejected.connect(self.reject)
@@ -304,6 +322,7 @@ class AISettingsDialog(QDialog):
                 gpu_layers=self.gpu_layers.value(),
                 ollama_url=self.ollama_url.text().strip(),
                 ollama_model=self.ollama_model.text().strip(),
+                use_solution_chunks=self.use_solution_chunks.isChecked(),
             )
         )
         self.accept()

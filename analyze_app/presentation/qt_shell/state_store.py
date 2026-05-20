@@ -43,6 +43,7 @@ class AISettings:
     gpu_layers: int
     ollama_url: str
     ollama_model: str
+    use_solution_chunks: bool = True
 
 
 class UiStateStore:
@@ -244,6 +245,7 @@ class UiStateStore:
             ollama_model=str(
                 self.settings.value("ai/ollama_model", DEFAULT_CONFIG.ollama_model) or DEFAULT_CONFIG.ollama_model
             ),
+            use_solution_chunks=_coerce_bool(self.settings.value("ai/use_solution_chunks", True), True),
         )
 
     def set_ai_settings(self, settings: AISettings) -> None:
@@ -254,6 +256,7 @@ class UiStateStore:
         self.settings.setValue("ai/gpu_layers", int(settings.gpu_layers))
         self.settings.setValue("ai/ollama_url", settings.ollama_url)
         self.settings.setValue("ai/ollama_model", settings.ollama_model)
+        self.settings.setValue("ai/use_solution_chunks", bool(settings.use_solution_chunks))
 
 
 def _coerce_int_list(values: list[object]) -> list[int]:
@@ -280,3 +283,17 @@ def _coerce_int(value: object, default: int) -> int:
         return int(value)  # type: ignore[arg-type]
     except (TypeError, ValueError):
         return default
+
+
+def _coerce_bool(value: object, default: bool) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"1", "true", "yes", "on"}:
+            return True
+        if normalized in {"0", "false", "no", "off"}:
+            return False
+    if isinstance(value, int):
+        return bool(value)
+    return default

@@ -162,6 +162,7 @@ class RepositoryRefreshWorker(QObject):
         store: DatabaseStore,
         thresholds: dict[str, list[float]],
         ai_config: AppConfig,
+        ai_use_solution_chunks: bool,
         install_python_dependencies: bool,
     ) -> None:
         super().__init__()
@@ -170,6 +171,7 @@ class RepositoryRefreshWorker(QObject):
         self.store = store
         self.thresholds = thresholds
         self.ai_config = ai_config
+        self.ai_use_solution_chunks = ai_use_solution_chunks
         self.install_python_dependencies = install_python_dependencies
 
     @Slot()
@@ -204,6 +206,7 @@ class RepositoryRefreshWorker(QObject):
             on_tests_finished=tests_results.append,
             use_cache=False,
             install_python_dependencies=self.install_python_dependencies,
+            ai_use_solution_chunks=self.ai_use_solution_chunks,
         )
         tests = tests_results[0] if tests_results else TestRunResult()
 
@@ -480,7 +483,7 @@ class MainWindow(QMainWindow):
     def _open_ai_settings(self) -> None:
         dialog = AISettingsDialog(self.state_store, self)
         if dialog.exec() == QDialog.DialogCode.Accepted:
-            self.status.showMessage("AI model settings saved.", 4_000)
+            self.status.showMessage("AI settings saved. Refresh the overview to apply them.", 4_000)
 
     def _open_editor_settings(self) -> None:
         dialog = CodeEditorSettingsDialog(self.state_store, self)
@@ -875,6 +878,7 @@ class MainWindow(QMainWindow):
             store=self.store,
             thresholds=self.state_store.quality_thresholds(),
             ai_config=self._ai_config(),
+            ai_use_solution_chunks=self.state_store.ai_settings().use_solution_chunks,
             install_python_dependencies=install_python_dependencies,
         )
         self.refresh_worker.moveToThread(self.refresh_thread)
@@ -1034,6 +1038,7 @@ class MainWindow(QMainWindow):
             tracked_files,
             metric_details=metric_details,
             install_python_dependencies=self._confirm_python_dependency_install(self.current_repo),
+            ai_use_solution_chunks=self.state_store.ai_settings().use_solution_chunks,
         )
         self.tabs.overview_tab.update_metrics(metrics, metric_details)
         self.tabs.overview_tab.load_readme(repo_path)
@@ -1055,6 +1060,7 @@ class MainWindow(QMainWindow):
         tracked_files: list[str] | None = None,
         metric_details: MetricDetailsMap | None = None,
         install_python_dependencies: bool = True,
+        ai_use_solution_chunks: bool = True,
     ) -> dict[str, MetricValue]:
         if not self.current_repo:
             return {}
@@ -1068,6 +1074,7 @@ class MainWindow(QMainWindow):
             tracked_files=tracked_files,
             metric_details=metric_details,
             install_python_dependencies=install_python_dependencies,
+            ai_use_solution_chunks=ai_use_solution_chunks,
         )
 
     def _calculate_ai_signal_metric(self, repo_path: Path) -> tuple[str, str, str]:
@@ -1079,10 +1086,12 @@ class MainWindow(QMainWindow):
             git_backend=self.git_backend,
             store=self.store,
             use_cache=True,
+            use_solution_chunks=self.state_store.ai_settings().use_solution_chunks,
         )
         return metric
 
     def _build_ai_authorship_use_case(self):
+        ai_settings = self.state_store.ai_settings()
         calibration_path = resolve_authorship_calibration_path(
             DEFAULT_CONFIG.ai_authorship_model_path,
             DEFAULT_CONFIG.ai_authorship_calibration_path,
@@ -1093,6 +1102,7 @@ class MainWindow(QMainWindow):
             extractor=FeatureExtractor(),
             model_runtime=build_authorship_runtime(DEFAULT_CONFIG.ai_authorship_model_path),
             calibrator=ProbabilityCalibrator(calibration_path),
+            use_solution_chunks=ai_settings.use_solution_chunks,
         )
 
     @staticmethod
@@ -2067,6 +2077,7 @@ def _calculate_quality_metrics(
     on_tests_finished: Callable[[TestRunResult], None] | None = None,
     use_cache: bool = True,
     install_python_dependencies: bool = True,
+    ai_use_solution_chunks: bool = True,
 ) -> dict[str, MetricValue]:
     kloc = max(loc / 1000.0, 0.001)
     metrics: dict[str, MetricValue] = {}
@@ -2154,7 +2165,14 @@ def _calculate_quality_metrics(
     )
     _store_metric_details(metric_details, "duplication", _duplication_details(duplication))
     publish("duplication")
-    ai_metric, ai_details = _calculate_ai_signal_metric_result(repo_id, repo_path, git_backend, store, use_cache=use_cache)
+    ai_metric, ai_details = _calculate_ai_signal_metric_result(
+        repo_id,
+        repo_path,
+        git_backend,
+        store,
+        use_cache=use_cache,
+        use_solution_chunks=ai_use_solution_chunks,
+    )
     metrics["ai_signal"] = ai_metric
     _store_metric_details(metric_details, "ai_signal", ai_details)
     publish("ai_signal")
@@ -2190,8 +2208,16 @@ def _calculate_ai_signal_metric(
     git_backend: GitBackend,
     store: DatabaseStore,
     use_cache: bool = True,
+    use_solution_chunks: bool = True,
 ) -> tuple[str, str, str]:
-    metric, _details = _calculate_ai_signal_metric_result(repo_id, repo_path, git_backend, store, use_cache=use_cache)
+    metric, _details = _calculate_ai_signal_metric_result(
+        repo_id,
+        repo_path,
+        git_backend,
+        store,
+        use_cache=use_cache,
+        use_solution_chunks=use_solution_chunks,
+    )
     return metric
 
 
@@ -2201,9 +2227,10 @@ def _calculate_ai_signal_metric_result(
     git_backend: GitBackend,
     store: DatabaseStore,
     use_cache: bool = True,
+    use_solution_chunks: bool = True,
 ) -> tuple[MetricValue, list[MetricDetail]]:
     try:
-        result = _build_ai_authorship_use_case(git_backend, store).execute(
+        result = _build_ai_authorship_use_case(git_backend, store, use_solution_chunks).execute(
             repo_id=repo_id,
             repo_path=repo_path,
             scope="working_tree",
@@ -2234,13 +2261,15 @@ def _calculate_ai_signal_metric_result(
         grade = "D"
     else:
         grade = "E"
+    analysis_mode = "solution-like куски" if use_solution_chunks else "целые .py файлы"
     metric = grade, f"{probability_pct:.1f}% (данные {result.data_sufficiency:.2f})", "ниже — лучше"
     details: list[MetricDetail] = [
         {
             "location": result.scope,
             "message": (
                 f"Вероятность {probability_pct:.1f}%, "
-                f"достаточность данных {result.data_sufficiency:.2f}. {result.model_info}"
+                f"достаточность данных {result.data_sufficiency:.2f}, "
+                f"режим: {analysis_mode}. {result.model_info}"
             ),
             "severity": "info",
             "tool": "ai-authorship",
@@ -2258,7 +2287,11 @@ def _calculate_ai_signal_metric_result(
     return metric, details
 
 
-def _build_ai_authorship_use_case(git_backend: GitBackend, store: DatabaseStore) -> DetectAIAuthorshipUseCase:
+def _build_ai_authorship_use_case(
+    git_backend: GitBackend,
+    store: DatabaseStore,
+    use_solution_chunks: bool = True,
+) -> DetectAIAuthorshipUseCase:
     calibration_path = resolve_authorship_calibration_path(
         DEFAULT_CONFIG.ai_authorship_model_path,
         DEFAULT_CONFIG.ai_authorship_calibration_path,
@@ -2269,6 +2302,7 @@ def _build_ai_authorship_use_case(git_backend: GitBackend, store: DatabaseStore)
         extractor=FeatureExtractor(),
         model_runtime=build_authorship_runtime(DEFAULT_CONFIG.ai_authorship_model_path),
         calibrator=ProbabilityCalibrator(calibration_path),
+        use_solution_chunks=use_solution_chunks,
     )
 
 

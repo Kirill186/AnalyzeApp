@@ -13,6 +13,7 @@ from analyze_app.infrastructure.storage.database_store import DatabaseStore
 
 class DetectAIAuthorshipUseCase:
     SEGMENTATION_VERSION = "solution_chunks_v1"
+    WHOLE_FILES_VERSION = "whole_files_v1"
 
     DISCLAIMER = (
         "Оценка носит вероятностный характер и не доказывает факт AI-генерации. "
@@ -26,12 +27,14 @@ class DetectAIAuthorshipUseCase:
         extractor: FeatureExtractor,
         model_runtime: AuthorshipRuntime,
         calibrator: ProbabilityCalibrator,
+        use_solution_chunks: bool = True,
     ) -> None:
         self.git_backend = git_backend
         self.store = store
         self.extractor = extractor
         self.model_runtime = model_runtime
         self.calibrator = calibrator
+        self.use_solution_chunks = use_solution_chunks
 
     def execute(
         self,
@@ -43,8 +46,9 @@ class DetectAIAuthorshipUseCase:
         use_cache: bool = True,
     ) -> AIAuthorshipResult:
         source_blobs = self._collect_code(repo_path, scope, commit_hash, files)
-        solution_blobs = self._solution_like_blobs(source_blobs)
-        scope_key = self._scope_key(scope, commit_hash, files, source_blobs)
+        analysis_blobs = self._analysis_blobs(source_blobs)
+        analysis_mode = self._analysis_mode()
+        scope_key = self._scope_key(scope, commit_hash, files, source_blobs, analysis_mode)
 
         if use_cache:
             cached = self.store.load_ai_authorship(repo_id, scope_key)
@@ -56,10 +60,10 @@ class DetectAIAuthorshipUseCase:
                 return cached
 
         source_features = self._aggregate_features(source_blobs)
-        features = self._aggregate_features(solution_blobs)
+        features = self._aggregate_features(analysis_blobs)
 
         if hasattr(self.model_runtime, "predict_code_probability"):
-            raw_probability = self.model_runtime.predict_code_probability(solution_blobs)  # type: ignore[attr-defined]
+            raw_probability = self.model_runtime.predict_code_probability(analysis_blobs)  # type: ignore[attr-defined]
         else:
             raw_probability = self.model_runtime.predict_probability(features)
         calibrated_probability = self.calibrator.calibrate(raw_probability)
@@ -74,7 +78,7 @@ class DetectAIAuthorshipUseCase:
             calibration_version=self.calibrator.version,
             model_info=(
                 f"{self.model_runtime.model_version} "
-                f"(dataset={self.model_runtime.dataset_version}; segments={self.SEGMENTATION_VERSION})"
+                f"(dataset={self.model_runtime.dataset_version}; segments={analysis_mode})"
             ),
             disclaimer=self.DISCLAIMER,
         )
@@ -120,6 +124,14 @@ class DetectAIAuthorshipUseCase:
             return code
 
         raise ValueError(f"Unsupported scope: {scope}")
+
+    def _analysis_blobs(self, source_blobs: list[str]) -> list[str]:
+        if self.use_solution_chunks:
+            return self._solution_like_blobs(source_blobs)
+        return source_blobs
+
+    def _analysis_mode(self) -> str:
+        return self.SEGMENTATION_VERSION if self.use_solution_chunks else self.WHOLE_FILES_VERSION
 
     def _solution_like_blobs(self, code_blobs: list[str]) -> list[str]:
         segmented: list[str] = []
@@ -250,14 +262,20 @@ class DetectAIAuthorshipUseCase:
         return max(0.05, base - syntax_error_penalty)
 
     @staticmethod
-    def _scope_key(scope: str, commit_hash: str | None, files: list[str] | None, code_blobs: list[str]) -> str:
+    def _scope_key(
+        scope: str,
+        commit_hash: str | None,
+        files: list[str] | None,
+        code_blobs: list[str],
+        analysis_mode: str,
+    ) -> str:
         content_hash = DetectAIAuthorshipUseCase._content_hash(code_blobs)
         if scope == "commit":
-            return f"commit:{commit_hash}:{DetectAIAuthorshipUseCase.SEGMENTATION_VERSION}:{content_hash}"
+            return f"commit:{commit_hash}:{analysis_mode}:{content_hash}"
         if scope == "file":
             normalized = ",".join(sorted(files or []))
-            return f"file:{normalized}:{DetectAIAuthorshipUseCase.SEGMENTATION_VERSION}:{content_hash}"
-        return f"working_tree:{DetectAIAuthorshipUseCase.SEGMENTATION_VERSION}:{content_hash}"
+            return f"file:{normalized}:{analysis_mode}:{content_hash}"
+        return f"working_tree:{analysis_mode}:{content_hash}"
 
     @staticmethod
     def _content_hash(code_blobs: list[str]) -> str:

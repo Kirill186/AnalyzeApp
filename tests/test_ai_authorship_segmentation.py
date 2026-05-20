@@ -58,7 +58,7 @@ class FakeCalibrator:
         return probability
 
 
-def build_use_case(files: dict[str, str], changed: list[str] | None = None):
+def build_use_case(files: dict[str, str], changed: list[str] | None = None, use_solution_chunks: bool = True):
     runtime = FakeRuntime()
     store = FakeStore()
     use_case = DetectAIAuthorshipUseCase(
@@ -67,6 +67,7 @@ def build_use_case(files: dict[str, str], changed: list[str] | None = None):
         extractor=FeatureExtractor(),
         model_runtime=runtime,
         calibrator=FakeCalibrator(),
+        use_solution_chunks=use_solution_chunks,
     )
     return use_case, runtime, store
 
@@ -89,6 +90,36 @@ def test_working_tree_scores_all_tracked_python_files_even_when_changes_exist() 
     assert all("not python" not in blob for blob in runtime.code_blobs)
     assert store.saved_scope_key is not None
     assert DetectAIAuthorshipUseCase.SEGMENTATION_VERSION in store.saved_scope_key
+
+
+def test_model_can_score_whole_files_without_solution_chunking() -> None:
+    use_case, runtime, store = build_use_case(
+        {
+            "service.py": (
+                "import os\n\n"
+                "class Service:\n"
+                "    def add(self, value):\n"
+                "        return value + 1\n\n"
+                "    def remove(self, value):\n"
+                "        return value - 1\n\n"
+                "def top_level():\n"
+                "    return os.getcwd()\n"
+            )
+        },
+        use_solution_chunks=False,
+    )
+
+    result = use_case.execute(1, Path("."), "working_tree", use_cache=False)
+
+    assert result.probability == 0.42
+    assert len(runtime.code_blobs) == 1
+    assert "def add" in runtime.code_blobs[0]
+    assert "def remove" in runtime.code_blobs[0]
+    assert "def top_level" in runtime.code_blobs[0]
+    assert store.saved_scope_key is not None
+    assert DetectAIAuthorshipUseCase.WHOLE_FILES_VERSION in store.saved_scope_key
+    assert DetectAIAuthorshipUseCase.SEGMENTATION_VERSION not in store.saved_scope_key
+    assert f"segments={DetectAIAuthorshipUseCase.WHOLE_FILES_VERSION}" in result.model_info
 
 
 def test_model_receives_solution_like_chunks_instead_of_whole_file() -> None:
