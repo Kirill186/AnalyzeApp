@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
     QDialogButtonBox,
+    QDoubleSpinBox,
     QFileDialog,
     QFormLayout,
+    QGridLayout,
     QGroupBox,
     QHBoxLayout,
     QLabel,
@@ -19,14 +23,26 @@ from PySide6.QtWidgets import (
 from analyze_app.presentation.qt_shell.state_store import AISettings, DEFAULT_QUALITY_THRESHOLDS, UiStateStore
 
 
-QUALITY_FIELDS: list[tuple[str, str]] = [
-    ("lint_issues_per_kloc", "Линт (ruff issues / KLOC)"),
-    ("mypy_errors_per_kloc", "Типы (mypy errors / KLOC)"),
-    ("tests_passed_rate_pct", "Тесты (доля passed, %)"),
-    ("complexity_b_plus_share_pct", "Сложность (доля B+ блоков, %)"),
-    ("maintainability_avg_mi", "Поддержка (средний MI)"),
-    ("dead_code_findings_per_kloc", "Мёртвый код (findings / KLOC)"),
-    ("duplication_pct", "Дубли (% дублирования)"),
+@dataclass(frozen=True, slots=True)
+class QualityField:
+    key: str
+    label: str
+    hint: str
+    direction: str
+    suffix: str
+    step: float
+    decimals: int
+    maximum: float
+
+
+QUALITY_FIELDS: list[QualityField] = [
+    QualityField("lint_issues_per_kloc", "Линт", "ruff issues / KLOC", "lower", " /KLOC", 0.1, 1, 10_000.0),
+    QualityField("mypy_errors_per_kloc", "Типы", "mypy errors / KLOC", "lower", " /KLOC", 0.1, 1, 10_000.0),
+    QualityField("tests_passed_rate_pct", "Тесты", "доля passed", "upper", "%", 1.0, 1, 100.0),
+    QualityField("complexity_b_plus_share_pct", "Сложность", "доля B+ блоков", "lower", "%", 1.0, 1, 100.0),
+    QualityField("maintainability_avg_mi", "Поддержка", "средний MI", "upper", "", 1.0, 1, 100.0),
+    QualityField("dead_code_findings_per_kloc", "Мёртвый код", "findings / KLOC", "lower", " /KLOC", 0.1, 1, 10_000.0),
+    QualityField("duplication_pct", "Дубли", "дублирование", "lower", "%", 1.0, 1, 100.0),
 ]
 
 
@@ -35,41 +51,99 @@ class QualitySettingsDialog(QDialog):
         super().__init__(parent)
         self.state_store = state_store
         self.setWindowTitle("Quality Grades")
-        self.setMinimumWidth(760)
+        self.setMinimumSize(900, 420)
 
         root = QVBoxLayout(self)
-        root.addWidget(QLabel("Пороги для оценок A/B/C/D. E — всё, что хуже D."))
+        intro = QLabel(
+            "Пороги для оценок A/B/C/D. E — всё, что хуже D. "
+            "Для метрик, где меньше лучше, значения — верхние границы; где больше лучше — нижние границы."
+        )
+        intro.setWordWrap(True)
+        root.addWidget(intro)
 
-        group = QGroupBox("Границы метрик")
-        form = QFormLayout(group)
-        self.fields: dict[str, QLineEdit] = {}
+        group = QGroupBox("Границы оценивания")
+        grid = QGridLayout(group)
+        grid.setHorizontalSpacing(12)
+        grid.setVerticalSpacing(8)
+
+        headers = ["Метрика", "Правило", "A", "B", "C", "D"]
+        for column, title in enumerate(headers):
+            header = QLabel(f"<b>{title}</b>")
+            grid.addWidget(header, 0, column)
+
+        self.fields: dict[str, list[QDoubleSpinBox]] = {}
+        self.field_labels: dict[str, str] = {}
+        self.field_directions: dict[str, str] = {}
 
         thresholds = self.state_store.quality_thresholds()
-        for key, label in QUALITY_FIELDS:
-            values = thresholds.get(key, DEFAULT_QUALITY_THRESHOLDS[key])
-            editor = QLineEdit(", ".join(str(value).rstrip("0").rstrip(".") if float(value).is_integer() else str(value) for value in values))
-            editor.setPlaceholderText("Например: 2, 6, 12, 20")
-            form.addRow(label, editor)
-            self.fields[key] = editor
+        for row, field in enumerate(QUALITY_FIELDS, start=1):
+            values = thresholds.get(field.key, DEFAULT_QUALITY_THRESHOLDS[field.key])
+            metric_label = QLabel(f"{field.label}\n{field.hint}")
+            metric_label.setWordWrap(True)
+            grid.addWidget(metric_label, row, 0)
+
+            if field.direction == "lower":
+                rule = "меньше — лучше\nA/B/C/D: до значения"
+            else:
+                rule = "больше — лучше\nA/B/C/D: от значения"
+            rule_label = QLabel(rule)
+            rule_label.setWordWrap(True)
+            grid.addWidget(rule_label, row, 1)
+
+            editors: list[QDoubleSpinBox] = []
+            for column, value in enumerate(values[:4], start=2):
+                editor = QDoubleSpinBox()
+                editor.setRange(0.0, field.maximum)
+                editor.setDecimals(field.decimals)
+                editor.setSingleStep(field.step)
+                editor.setValue(float(value))
+                editor.setSuffix(field.suffix)
+                editor.setKeyboardTracking(False)
+                editor.setMinimumWidth(112)
+                grid.addWidget(editor, row, column)
+                editors.append(editor)
+
+            self.fields[field.key] = editors
+            self.field_labels[field.key] = field.label
+            self.field_directions[field.key] = field.direction
 
         root.addWidget(group)
+
+        reset_row = QHBoxLayout()
+        reset_row.addStretch()
+        reset_button = QPushButton("Сбросить пороги")
+        reset_button.clicked.connect(self._reset_to_defaults)
+        reset_row.addWidget(reset_button)
+        root.addLayout(reset_row)
 
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
         buttons.accepted.connect(self._accept)
         buttons.rejected.connect(self.reject)
         root.addWidget(buttons)
 
+    def _reset_to_defaults(self) -> None:
+        for key, editors in self.fields.items():
+            for editor, value in zip(editors, DEFAULT_QUALITY_THRESHOLDS[key], strict=False):
+                editor.setValue(float(value))
+
     def _accept(self) -> None:
         parsed: dict[str, list[float]] = {}
-        for key, editor in self.fields.items():
-            raw = editor.text().strip()
-            try:
-                values = [float(chunk.strip()) for chunk in raw.split(",") if chunk.strip()]
-            except ValueError:
-                QMessageBox.warning(self, "Некорректный ввод", f"Поле '{key}' должно содержать только числа.")
+        for key, editors in self.fields.items():
+            values = [editor.value() for editor in editors]
+            direction = self.field_directions[key]
+            if direction == "lower" and values != sorted(values):
+                QMessageBox.warning(
+                    self,
+                    "Некорректные пороги",
+                    f"Для метрики «{self.field_labels[key]}» значения A/B/C/D должны идти по возрастанию.",
+                )
                 return
-            if len(values) != 4:
-                QMessageBox.warning(self, "Некорректный ввод", f"Поле '{key}' должно содержать 4 значения.")
+            if direction == "upper" and values != sorted(values, reverse=True):
+                QMessageBox.warning(
+                    self,
+                    "Некорректные пороги",
+                    f"Для метрики «{self.field_labels[key]}» значения A/B/C/D должны идти по убыванию.",
+                )
                 return
             parsed[key] = values
 
