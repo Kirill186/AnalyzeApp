@@ -25,13 +25,13 @@ from analyze_app.infrastructure.ai.authorship import (
     resolve_authorship_calibration_path,
 )
 from analyze_app.infrastructure.git.backend import GitBackend
-from analyze_app.infrastructure.storage.sqlite_store import SqliteStore
+from analyze_app.infrastructure.storage.database_store import DatabaseStore
 from analyze_app.shared.config import DEFAULT_CONFIG
 
 
-def _build_services(db_path: Path | None = None) -> tuple[GitBackend, SqliteStore, DiffSummaryBackend, RuffRunner, PytestRunner]:
+def _build_services(db_path: Path | None = None) -> tuple[GitBackend, DatabaseStore, DiffSummaryBackend, RuffRunner, PytestRunner]:
     config = DEFAULT_CONFIG
-    store = SqliteStore(db_path or config.db_path)
+    store = DatabaseStore(db_path or config.db_path)
     git_backend = GitBackend()
     ai_backend = build_diff_ai_backend(config)
     return git_backend, store, ai_backend, RuffRunner(), PytestRunner()
@@ -126,7 +126,7 @@ def cmd_commit_push(args: argparse.Namespace) -> None:
         print("push skipped")
 
 
-def _build_ai_authorship_use_case(git_backend: GitBackend, store: SqliteStore) -> DetectAIAuthorshipUseCase:
+def _build_ai_authorship_use_case(git_backend: GitBackend, store: DatabaseStore) -> DetectAIAuthorshipUseCase:
     config = DEFAULT_CONFIG
     calibration_path = resolve_authorship_calibration_path(config.ai_authorship_model_path, config.ai_authorship_calibration_path)
     return DetectAIAuthorshipUseCase(

@@ -5,11 +5,11 @@ from pathlib import Path
 from analyze_app.domain.entities import ProjectGraph
 from analyze_app.infrastructure.analysis.map.ast_map_builder import AstMapBuilder
 from analyze_app.infrastructure.git.backend import GitBackend
-from analyze_app.infrastructure.storage.sqlite_store import SqliteStore
+from analyze_app.infrastructure.storage.database_store import DatabaseStore
 
 
 class BuildProjectMapUseCase:
-    def __init__(self, git_backend: GitBackend, map_builder: AstMapBuilder, store: SqliteStore) -> None:
+    def __init__(self, git_backend: GitBackend, map_builder: AstMapBuilder, store: DatabaseStore) -> None:
         self.git_backend = git_backend
         self.map_builder = map_builder
         self.store = store

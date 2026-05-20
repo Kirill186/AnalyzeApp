@@ -7,7 +7,7 @@ from analyze_app.infrastructure.ai.base import DiffSummaryBackend
 from analyze_app.infrastructure.analysis.pytest_runner import PytestRunner, TestProgressCallback
 from analyze_app.infrastructure.analysis.ruff_runner import RuffRunner
 from analyze_app.infrastructure.git.backend import GitBackend
-from analyze_app.infrastructure.storage.sqlite_store import SqliteStore
+from analyze_app.infrastructure.storage.database_store import DatabaseStore
 
 
 class WorkingTreeReportUseCase:
@@ -17,7 +17,7 @@ class WorkingTreeReportUseCase:
         ruff_runner: RuffRunner,
         pytest_runner: PytestRunner,
         ai_backend: DiffSummaryBackend,
-        store: SqliteStore,
+        store: DatabaseStore,
     ) -> None:
         self.git_backend = git_backend
         self.ruff_runner = ruff_runner

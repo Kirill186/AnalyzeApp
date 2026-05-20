@@ -48,7 +48,7 @@ analyze_app/infrastructure/git/backend.py
 analyze_app/infrastructure/jobs/__init__.py
 analyze_app/infrastructure/jobs/queue.py
 analyze_app/infrastructure/storage/__init__.py
-analyze_app/infrastructure/storage/sqlite_store.py
+analyze_app/infrastructure/storage/database_store.py
 analyze_app/presentation/__init__.py
 analyze_app/presentation/qt_shell/__init__.py
 analyze_app/presentation/qt_shell/app_menu.py

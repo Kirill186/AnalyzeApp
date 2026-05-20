@@ -55,7 +55,7 @@ from analyze_app.infrastructure.analysis.radon_runner import RadonRunner
 from analyze_app.infrastructure.analysis.ruff_runner import RuffRunner
 from analyze_app.infrastructure.analysis.vulture_runner import VultureRunner
 from analyze_app.infrastructure.git.backend import GitBackend
-from analyze_app.infrastructure.storage.sqlite_store import SqliteStore
+from analyze_app.infrastructure.storage.database_store import DatabaseStore
 from analyze_app.presentation.qt_shell.app_menu import build_menu
 from analyze_app.presentation.qt_shell.repo_add_dialog import RepoAddDialog
 from analyze_app.presentation.qt_shell.repo_sidebar import RepoSidebar, STANDARD_GROUPS
@@ -85,7 +85,7 @@ class ImportRepositoryWorker(QObject):
     finished = Signal(object)
     failed = Signal(str)
 
-    def __init__(self, source: str, git_backend: GitBackend, store: SqliteStore) -> None:
+    def __init__(self, source: str, git_backend: GitBackend, store: DatabaseStore) -> None:
         super().__init__()
         self.source = source
         self.git_backend = git_backend
@@ -155,7 +155,7 @@ class RepositoryRefreshWorker(QObject):
         self,
         repo: RepoListItemVM,
         git_backend: GitBackend,
-        store: SqliteStore,
+        store: DatabaseStore,
         thresholds: dict[str, list[float]],
         ai_config: AppConfig,
     ) -> None:
@@ -257,7 +257,7 @@ class ProjectMapBuildWorker(QObject):
     finished = Signal(object)
     failed = Signal(int, str)
 
-    def __init__(self, repo_id: int, repo_path: Path, git_backend: GitBackend, store: SqliteStore) -> None:
+    def __init__(self, repo_id: int, repo_path: Path, git_backend: GitBackend, store: DatabaseStore) -> None:
         super().__init__()
         self.repo_id = repo_id
         self.repo_path = repo_path
@@ -381,7 +381,7 @@ class WorkspaceGitActionWorker(QObject):
 
 
 class MainWindow(QMainWindow):
-    def __init__(self, store: SqliteStore, git_backend: GitBackend) -> None:
+    def __init__(self, store: DatabaseStore, git_backend: GitBackend) -> None:
         super().__init__()
         self.store = store
         self.git_backend = git_backend
@@ -1555,7 +1555,7 @@ def _snapshot_payload_from_result(result: RepositoryRefreshResult) -> dict:
 def _repository_result_from_snapshot(
     repo: RepoListItemVM,
     payload: dict,
-    store: SqliteStore,
+    store: DatabaseStore,
 ) -> RepositoryRefreshResult:
     cached_overview = store.load_project_overview(repo.repo_id)
     summary = cached_overview[0] if cached_overview else str(payload.get("summary") or "")
@@ -1750,7 +1750,7 @@ def _normalize_repo_group(group: object, fallback: str) -> str:
 def run_desktop_app() -> None:
     app = QApplication(sys.argv)
     apply_theme(app)
-    store = SqliteStore(DEFAULT_CONFIG.db_path)
+    store = DatabaseStore(DEFAULT_CONFIG.db_path)
     window = MainWindow(store, GitBackend())
     window.show()
     app.exec()
@@ -1955,7 +1955,7 @@ def _calculate_quality_metrics(
     loc: int,
     thresholds: dict[str, list[float]],
     git_backend: GitBackend,
-    store: SqliteStore,
+    store: DatabaseStore,
     tracked_files: list[str] | None = None,
     tests: TestRunResult | None = None,
     metric_details: MetricDetailsMap | None = None,
@@ -2079,7 +2079,7 @@ def _calculate_ai_signal_metric(
     repo_id: int,
     repo_path: Path,
     git_backend: GitBackend,
-    store: SqliteStore,
+    store: DatabaseStore,
     use_cache: bool = True,
 ) -> tuple[str, str, str]:
     metric, _details = _calculate_ai_signal_metric_result(repo_id, repo_path, git_backend, store, use_cache=use_cache)
@@ -2090,7 +2090,7 @@ def _calculate_ai_signal_metric_result(
     repo_id: int,
     repo_path: Path,
     git_backend: GitBackend,
-    store: SqliteStore,
+    store: DatabaseStore,
     use_cache: bool = True,
 ) -> tuple[MetricValue, list[MetricDetail]]:
     try:
@@ -2146,7 +2146,7 @@ def _calculate_ai_signal_metric_result(
     return metric, details
 
 
-def _build_ai_authorship_use_case(git_backend: GitBackend, store: SqliteStore) -> DetectAIAuthorshipUseCase:
+def _build_ai_authorship_use_case(git_backend: GitBackend, store: DatabaseStore) -> DetectAIAuthorshipUseCase:
     calibration_path = resolve_authorship_calibration_path(
         DEFAULT_CONFIG.ai_authorship_model_path,
         DEFAULT_CONFIG.ai_authorship_calibration_path,

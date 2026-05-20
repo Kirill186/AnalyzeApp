@@ -8,7 +8,7 @@ from pathlib import Path
 from analyze_app.domain.entities import AIAuthorshipResult
 from analyze_app.infrastructure.ai.authorship import AuthorshipRuntime, FeatureExtractor, ProbabilityCalibrator
 from analyze_app.infrastructure.git.backend import GitBackend
-from analyze_app.infrastructure.storage.sqlite_store import SqliteStore
+from analyze_app.infrastructure.storage.database_store import DatabaseStore
 
 
 class DetectAIAuthorshipUseCase:
@@ -22,7 +22,7 @@ class DetectAIAuthorshipUseCase:
     def __init__(
         self,
         git_backend: GitBackend,
-        store: SqliteStore,
+        store: DatabaseStore,
         extractor: FeatureExtractor,
         model_runtime: AuthorshipRuntime,
         calibrator: ProbabilityCalibrator,
