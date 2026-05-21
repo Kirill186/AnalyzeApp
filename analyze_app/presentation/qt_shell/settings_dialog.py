@@ -468,6 +468,20 @@ class AISettingsDialog(QDialog):
 
         authorship_group = QGroupBox("AI-оценка кода")
         authorship_layout = QVBoxLayout(authorship_group)
+        authorship_form = QFormLayout()
+
+        self.authorship_calibration_profile = QComboBox()
+        self.authorship_calibration_profile.addItem("Balanced (T=2.0)", "balanced")
+        self.authorship_calibration_profile.addItem("None (raw probability)", "none")
+        self.authorship_calibration_profile.setCurrentIndex(
+            max(self.authorship_calibration_profile.findData(current.authorship_calibration_profile), 0)
+        )
+        self.authorship_calibration_profile.setToolTip(
+            "Balanced uses the tracked calibration profile. None shows raw model probability."
+        )
+        authorship_form.addRow("Calibration", self.authorship_calibration_profile)
+        authorship_layout.addLayout(authorship_form)
+
         self.use_solution_chunks = QCheckBox("Делить код на solution-like куски")
         self.use_solution_chunks.setChecked(current.use_solution_chunks)
         self.use_solution_chunks.setToolTip(
@@ -530,6 +544,7 @@ class AISettingsDialog(QDialog):
                 ollama_url=self.ollama_url.text().strip(),
                 ollama_model=self.ollama_model.text().strip(),
                 use_solution_chunks=self.use_solution_chunks.isChecked(),
+                authorship_calibration_profile=str(self.authorship_calibration_profile.currentData()),
             )
         )
         self.accept()

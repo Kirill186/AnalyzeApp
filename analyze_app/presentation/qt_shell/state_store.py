@@ -7,6 +7,11 @@ from typing import Literal
 
 from PySide6.QtCore import QSettings
 
+from analyze_app.infrastructure.ai.authorship import (
+    DEFAULT_CALIBRATION_PROFILE,
+    CalibrationProfile,
+    normalize_calibration_profile,
+)
 from analyze_app.infrastructure.analysis.ruff_settings import (
     RuffSettings,
     ruff_settings_from_mapping,
@@ -50,6 +55,7 @@ class AISettings:
     ollama_url: str
     ollama_model: str
     use_solution_chunks: bool = True
+    authorship_calibration_profile: CalibrationProfile = DEFAULT_CALIBRATION_PROFILE
 
 
 class UiStateStore:
@@ -254,6 +260,15 @@ class UiStateStore:
     def ai_settings(self) -> AISettings:
         backend = str(self.settings.value("ai/backend", DEFAULT_CONFIG.llm_backend) or DEFAULT_CONFIG.llm_backend)
         backend = backend if backend in {"llama_cpp", "ollama"} else "llama_cpp"
+        authorship_calibration_profile = normalize_calibration_profile(
+            str(
+                self.settings.value(
+                    "ai/authorship_calibration_profile",
+                    DEFAULT_CALIBRATION_PROFILE,
+                )
+                or DEFAULT_CALIBRATION_PROFILE
+            )
+        )
         return AISettings(
             backend=backend,  # type: ignore[arg-type]
             model_path=str(
@@ -267,6 +282,7 @@ class UiStateStore:
                 self.settings.value("ai/ollama_model", DEFAULT_CONFIG.ollama_model) or DEFAULT_CONFIG.ollama_model
             ),
             use_solution_chunks=_coerce_bool(self.settings.value("ai/use_solution_chunks", True), True),
+            authorship_calibration_profile=authorship_calibration_profile,
         )
 
     def set_ai_settings(self, settings: AISettings) -> None:
@@ -278,6 +294,10 @@ class UiStateStore:
         self.settings.setValue("ai/ollama_url", settings.ollama_url)
         self.settings.setValue("ai/ollama_model", settings.ollama_model)
         self.settings.setValue("ai/use_solution_chunks", bool(settings.use_solution_chunks))
+        self.settings.setValue(
+            "ai/authorship_calibration_profile",
+            normalize_calibration_profile(settings.authorship_calibration_profile),
+        )
 
 
 def _coerce_int_list(values: list[object]) -> list[int]:

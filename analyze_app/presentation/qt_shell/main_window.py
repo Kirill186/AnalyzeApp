@@ -42,7 +42,7 @@ from analyze_app.domain.entities import (
 )
 from analyze_app.infrastructure.ai.authorship import (
     FeatureExtractor,
-    ProbabilityCalibrator,
+    build_authorship_calibrator,
     build_authorship_runtime,
     resolve_authorship_calibration_path,
 )
@@ -170,6 +170,7 @@ class RepositoryRefreshWorker(QObject):
         ruff_settings: RuffSettings,
         ai_config: AppConfig,
         ai_use_solution_chunks: bool,
+        ai_calibration_profile: str,
         install_python_dependencies: bool,
     ) -> None:
         super().__init__()
@@ -180,6 +181,7 @@ class RepositoryRefreshWorker(QObject):
         self.ruff_settings = ruff_settings
         self.ai_config = ai_config
         self.ai_use_solution_chunks = ai_use_solution_chunks
+        self.ai_calibration_profile = ai_calibration_profile
         self.install_python_dependencies = install_python_dependencies
 
     @Slot()
@@ -215,6 +217,7 @@ class RepositoryRefreshWorker(QObject):
             use_cache=False,
             install_python_dependencies=self.install_python_dependencies,
             ai_use_solution_chunks=self.ai_use_solution_chunks,
+            ai_calibration_profile=self.ai_calibration_profile,
             ruff_settings=self.ruff_settings,
         )
         tests = tests_results[0] if tests_results else TestRunResult()
@@ -885,6 +888,7 @@ class MainWindow(QMainWindow):
             return False
 
         install_python_dependencies = self._confirm_python_dependency_install(repo)
+        ai_settings = self.state_store.ai_settings()
         self.active_refresh_repo_id = repo.repo_id
         self.refresh_thread = QThread(self)
         self.refresh_worker = RepositoryRefreshWorker(
@@ -894,7 +898,8 @@ class MainWindow(QMainWindow):
             thresholds=self.state_store.quality_thresholds(),
             ruff_settings=self.state_store.ruff_settings(),
             ai_config=self._ai_config(),
-            ai_use_solution_chunks=self.state_store.ai_settings().use_solution_chunks,
+            ai_use_solution_chunks=ai_settings.use_solution_chunks,
+            ai_calibration_profile=ai_settings.authorship_calibration_profile,
             install_python_dependencies=install_python_dependencies,
         )
         self.refresh_worker.moveToThread(self.refresh_thread)
@@ -1048,13 +1053,15 @@ class MainWindow(QMainWindow):
         summary = cached_overview[0] if cached_overview else "Описание пока не сгенерировано. Нажмите Regenerate."
         self.tabs.overview_tab.update_project_info(self.current_repo.title, len(tracked_files), loc, summary)
         metric_details: MetricDetailsMap = {}
+        ai_settings = self.state_store.ai_settings()
         metrics = self._calculate_quality_metrics(
             repo_path,
             loc,
             tracked_files,
             metric_details=metric_details,
             install_python_dependencies=self._confirm_python_dependency_install(self.current_repo),
-            ai_use_solution_chunks=self.state_store.ai_settings().use_solution_chunks,
+            ai_use_solution_chunks=ai_settings.use_solution_chunks,
+            ai_calibration_profile=ai_settings.authorship_calibration_profile,
         )
         self.tabs.overview_tab.update_metrics(metrics, metric_details)
         self.tabs.overview_tab.load_readme(repo_path)
@@ -1077,6 +1084,7 @@ class MainWindow(QMainWindow):
         metric_details: MetricDetailsMap | None = None,
         install_python_dependencies: bool = True,
         ai_use_solution_chunks: bool = True,
+        ai_calibration_profile: str = "balanced",
     ) -> dict[str, MetricValue]:
         if not self.current_repo:
             return {}
@@ -1091,19 +1099,22 @@ class MainWindow(QMainWindow):
             metric_details=metric_details,
             install_python_dependencies=install_python_dependencies,
             ai_use_solution_chunks=ai_use_solution_chunks,
+            ai_calibration_profile=ai_calibration_profile,
             ruff_settings=self.state_store.ruff_settings(),
         )
 
     def _calculate_ai_signal_metric(self, repo_path: Path) -> tuple[str, str, str]:
         if not self.current_repo:
             return "—", "n/a", "репозиторий не выбран"
+        ai_settings = self.state_store.ai_settings()
         metric, _details = _calculate_ai_signal_metric_result(
             repo_id=self.current_repo.repo_id,
             repo_path=repo_path,
             git_backend=self.git_backend,
             store=self.store,
             use_cache=True,
-            use_solution_chunks=self.state_store.ai_settings().use_solution_chunks,
+            use_solution_chunks=ai_settings.use_solution_chunks,
+            calibration_profile=ai_settings.authorship_calibration_profile,
         )
         return metric
 
@@ -1118,7 +1129,7 @@ class MainWindow(QMainWindow):
             store=self.store,
             extractor=FeatureExtractor(),
             model_runtime=build_authorship_runtime(DEFAULT_CONFIG.ai_authorship_model_path),
-            calibrator=ProbabilityCalibrator(calibration_path),
+            calibrator=build_authorship_calibrator(calibration_path, ai_settings.authorship_calibration_profile),
             use_solution_chunks=ai_settings.use_solution_chunks,
         )
 
@@ -2095,6 +2106,7 @@ def _calculate_quality_metrics(
     use_cache: bool = True,
     install_python_dependencies: bool = True,
     ai_use_solution_chunks: bool = True,
+    ai_calibration_profile: str = "balanced",
     ruff_settings: RuffSettings | None = None,
 ) -> dict[str, MetricValue]:
     kloc = max(loc / 1000.0, 0.001)
@@ -2190,6 +2202,7 @@ def _calculate_quality_metrics(
         store,
         use_cache=use_cache,
         use_solution_chunks=ai_use_solution_chunks,
+        calibration_profile=ai_calibration_profile,
     )
     metrics["ai_signal"] = ai_metric
     _store_metric_details(metric_details, "ai_signal", ai_details)
@@ -2227,6 +2240,7 @@ def _calculate_ai_signal_metric(
     store: DatabaseStore,
     use_cache: bool = True,
     use_solution_chunks: bool = True,
+    calibration_profile: str = "balanced",
 ) -> tuple[str, str, str]:
     metric, _details = _calculate_ai_signal_metric_result(
         repo_id,
@@ -2235,6 +2249,7 @@ def _calculate_ai_signal_metric(
         store,
         use_cache=use_cache,
         use_solution_chunks=use_solution_chunks,
+        calibration_profile=calibration_profile,
     )
     return metric
 
@@ -2246,9 +2261,10 @@ def _calculate_ai_signal_metric_result(
     store: DatabaseStore,
     use_cache: bool = True,
     use_solution_chunks: bool = True,
+    calibration_profile: str = "balanced",
 ) -> tuple[MetricValue, list[MetricDetail]]:
     try:
-        result = _build_ai_authorship_use_case(git_backend, store, use_solution_chunks).execute(
+        result = _build_ai_authorship_use_case(git_backend, store, use_solution_chunks, calibration_profile).execute(
             repo_id=repo_id,
             repo_path=repo_path,
             scope="working_tree",
@@ -2287,7 +2303,7 @@ def _calculate_ai_signal_metric_result(
             "message": (
                 f"Вероятность {probability_pct:.1f}%, "
                 f"достаточность данных {result.data_sufficiency:.2f}, "
-                f"режим: {analysis_mode}. {result.model_info}"
+                f"режим: {analysis_mode}, calibration: {result.calibration_version}. {result.model_info}"
             ),
             "severity": "info",
             "tool": "ai-authorship",
@@ -2309,6 +2325,7 @@ def _build_ai_authorship_use_case(
     git_backend: GitBackend,
     store: DatabaseStore,
     use_solution_chunks: bool = True,
+    calibration_profile: str = "balanced",
 ) -> DetectAIAuthorshipUseCase:
     calibration_path = resolve_authorship_calibration_path(
         DEFAULT_CONFIG.ai_authorship_model_path,
@@ -2319,7 +2336,7 @@ def _build_ai_authorship_use_case(
         store=store,
         extractor=FeatureExtractor(),
         model_runtime=build_authorship_runtime(DEFAULT_CONFIG.ai_authorship_model_path),
-        calibrator=ProbabilityCalibrator(calibration_path),
+        calibrator=build_authorship_calibrator(calibration_path, calibration_profile),
         use_solution_chunks=use_solution_chunks,
     )
 

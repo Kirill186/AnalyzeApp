@@ -1,4 +1,11 @@
-from analyze_app.infrastructure.ai.authorship.calibrator import ProbabilityCalibrator
+from analyze_app.infrastructure.ai.authorship.calibrator import (
+    DEFAULT_CALIBRATION_PROFILE,
+    NO_CALIBRATION_VERSION,
+    CalibrationProfile,
+    ProbabilityCalibrator,
+    build_authorship_calibrator,
+    normalize_calibration_profile,
+)
 from analyze_app.infrastructure.ai.authorship.feature_extractor import FeatureExtractor
 from analyze_app.infrastructure.ai.authorship.model_runtime import ModelRuntime
 from analyze_app.infrastructure.ai.authorship.onnx_model_runtime import OnnxModelRuntime
@@ -10,10 +17,15 @@ from analyze_app.infrastructure.ai.authorship.runtime_factory import (
 
 __all__ = [
     "AuthorshipRuntime",
+    "CalibrationProfile",
+    "DEFAULT_CALIBRATION_PROFILE",
     "FeatureExtractor",
     "ModelRuntime",
+    "NO_CALIBRATION_VERSION",
     "OnnxModelRuntime",
     "ProbabilityCalibrator",
+    "build_authorship_calibrator",
     "build_authorship_runtime",
+    "normalize_calibration_profile",
     "resolve_authorship_calibration_path",
 ]

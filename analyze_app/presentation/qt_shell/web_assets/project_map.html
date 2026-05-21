@@ -384,7 +384,7 @@
           <div class="mode-switch" role="tablist" aria-label="View mode">
             <button class="mode-btn" data-mode="structural">Structural view</button>
             <button class="mode-btn" data-mode="hotspot">Hotspot overlay</button>
-            <button class="mode-btn" data-mode="landscape">Hotspot map</button>
+            <button class="mode-btn" data-mode="landscape">Structure map</button>
           </div>
           <button class="rebuild-map-btn" id="rebuildMapBtn" type="button">Построить карту</button>
         </div>
@@ -401,7 +401,7 @@
           <div class="legend-item"><span><i class="dot" style="background:var(--file)"></i> file / module</span><span class="kbd">корневые узлы</span></div>
           <div class="legend-item"><span><i class="dot" style="background:var(--class)"></i> class</span><span class="kbd">потомки file</span></div>
           <div class="legend-item"><span><i class="dot" style="background:var(--function)"></i> function</span><span class="kbd">методы и функции</span></div>
-          <div class="legend-item"><span><i class="dot" style="background:var(--hot)"></i> hotspot map</span><span class="kbd">файлы без ребер</span></div>
+          <div class="legend-item"><span><i class="dot" style="background:var(--hot)"></i> structure map</span><span class="kbd">файлы без ребер</span></div>
         </div>
       </section>
       <section class="related">
@@ -447,7 +447,7 @@
 
     function chooseInitialMode(data) {
       const requested = String(data.mode || '').toLowerCase();
-      if (requested.includes('hotspot map') || requested.includes('landscape')) return MODE.LANDSCAPE;
+      if (requested.includes('structure map') || requested.includes('hotspot map') || requested.includes('landscape')) return MODE.LANDSCAPE;
       if (requested.includes('hotspot')) return MODE.HOTSPOT;
 
       const nodeCount = (data.nodes || []).length;
@@ -1057,7 +1057,7 @@
       const functions = state.nodes.filter((n) => n.kind === 'function').length;
       const hotspotMax = maxHotspot(state.hotspots.length ? state.hotspots : state.nodes);
       const modeName = state.mode === MODE.LANDSCAPE
-        ? 'hotspot map'
+        ? 'structure map'
         : state.mode === MODE.HOTSPOT
           ? 'hotspot'
           : 'structural';
@@ -1207,7 +1207,7 @@
       });
       updateSummary();
       const modeLabel = mode === MODE.LANDSCAPE
-        ? 'Hotspot map'
+        ? 'Structure map'
         : mode === MODE.HOTSPOT
           ? 'Hotspot overlay'
           : 'Structural view';

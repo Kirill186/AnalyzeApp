@@ -6,7 +6,12 @@ from pathlib import Path
 
 from analyze_app.application.use_cases.detect_ai_authorship import DetectAIAuthorshipUseCase
 from analyze_app.domain.entities import AIAuthorshipResult
-from analyze_app.infrastructure.ai.authorship import FeatureExtractor, ProbabilityCalibrator
+from analyze_app.infrastructure.ai.authorship import (
+    NO_CALIBRATION_VERSION,
+    FeatureExtractor,
+    ProbabilityCalibrator,
+    build_authorship_calibrator,
+)
 from analyze_app.infrastructure.ai.authorship.runtime_factory import resolve_authorship_calibration_path
 
 
@@ -65,6 +70,32 @@ def test_temperature_calibration_softens_probability(tmp_path: Path) -> None:
     assert math.isclose(calibrator.calibrate(raw_probability), expected)
     assert calibrator.calibrate(raw_probability) < raw_probability
     assert calibrator.calibrate(0.5) == 0.5
+
+
+def test_no_calibration_profile_returns_raw_probability(tmp_path: Path) -> None:
+    config_path = tmp_path / "calibration.json"
+    config_path.write_text(
+        json.dumps({"method": "temperature", "calibration_version": "t2", "temperature": 2.0}),
+        encoding="utf-8",
+    )
+
+    calibrator = build_authorship_calibrator(config_path, "none")
+
+    assert calibrator.version == NO_CALIBRATION_VERSION
+    assert calibrator.calibrate(0.86371128) == 0.86371128
+
+
+def test_balanced_calibration_profile_uses_tracked_config(tmp_path: Path) -> None:
+    config_path = tmp_path / "calibration.json"
+    config_path.write_text(
+        json.dumps({"method": "temperature", "calibration_version": "t2", "temperature": 2.0}),
+        encoding="utf-8",
+    )
+
+    calibrator = build_authorship_calibrator(config_path, "balanced")
+
+    assert calibrator.version == "t2"
+    assert calibrator.calibrate(0.86371128) < 0.86371128
 
 
 def test_cached_ai_authorship_result_is_invalidated_when_calibration_changes() -> None:
