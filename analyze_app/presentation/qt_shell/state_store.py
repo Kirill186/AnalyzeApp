@@ -1,11 +1,17 @@
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Literal
 
 from PySide6.QtCore import QSettings
 
+from analyze_app.infrastructure.analysis.ruff_settings import (
+    RuffSettings,
+    ruff_settings_from_mapping,
+    ruff_settings_to_mapping,
+)
 from analyze_app.shared.config import DEFAULT_CONFIG
 
 
@@ -223,6 +229,21 @@ class UiStateStore:
 
     def reset_quality_thresholds(self) -> None:
         self.set_quality_thresholds({key: value.copy() for key, value in DEFAULT_QUALITY_THRESHOLDS.items()})
+
+    def ruff_settings(self) -> RuffSettings:
+        raw = self.settings.value("ruff/settings", "")
+        if isinstance(raw, str) and raw.strip():
+            try:
+                return ruff_settings_from_mapping(json.loads(raw))
+            except json.JSONDecodeError:
+                return RuffSettings()
+        if isinstance(raw, dict):
+            return ruff_settings_from_mapping(raw)
+        return RuffSettings()
+
+    def set_ruff_settings(self, settings: RuffSettings) -> None:
+        payload = ruff_settings_to_mapping(settings)
+        self.settings.setValue("ruff/settings", json.dumps(payload, ensure_ascii=False))
 
     def editor_command(self) -> str:
         return str(self.settings.value("editor/command", "") or "").strip()

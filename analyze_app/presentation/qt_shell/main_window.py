@@ -54,6 +54,7 @@ from analyze_app.infrastructure.analysis.python_environment import ManagedPython
 from analyze_app.infrastructure.analysis.pytest_runner import PytestRunner
 from analyze_app.infrastructure.analysis.radon_runner import RadonRunner
 from analyze_app.infrastructure.analysis.ruff_runner import RuffRunner
+from analyze_app.infrastructure.analysis.ruff_settings import RuffSettings
 from analyze_app.infrastructure.analysis.vulture_runner import VultureRunner
 from analyze_app.infrastructure.git.backend import GitBackend
 from analyze_app.infrastructure.storage.database_store import DatabaseStore
@@ -61,7 +62,12 @@ from analyze_app.presentation.qt_shell.app_menu import build_menu
 from analyze_app.presentation.qt_shell.repo_add_dialog import RepoAddDialog
 from analyze_app.presentation.qt_shell.repo_sidebar import RepoSidebar, STANDARD_GROUPS
 from analyze_app.presentation.qt_shell.report_tabs import ReportTabs
-from analyze_app.presentation.qt_shell.settings_dialog import AISettingsDialog, CodeEditorSettingsDialog, QualitySettingsDialog
+from analyze_app.presentation.qt_shell.settings_dialog import (
+    AISettingsDialog,
+    CodeEditorSettingsDialog,
+    QualitySettingsDialog,
+    RuffSettingsDialog,
+)
 from analyze_app.presentation.qt_shell.state_store import RepoListItemVM, UiStateStore
 from analyze_app.presentation.qt_shell.theme import apply_theme
 from analyze_app.shared.config import AppConfig, DEFAULT_CONFIG
@@ -161,6 +167,7 @@ class RepositoryRefreshWorker(QObject):
         git_backend: GitBackend,
         store: DatabaseStore,
         thresholds: dict[str, list[float]],
+        ruff_settings: RuffSettings,
         ai_config: AppConfig,
         ai_use_solution_chunks: bool,
         install_python_dependencies: bool,
@@ -170,6 +177,7 @@ class RepositoryRefreshWorker(QObject):
         self.git_backend = git_backend
         self.store = store
         self.thresholds = thresholds
+        self.ruff_settings = ruff_settings
         self.ai_config = ai_config
         self.ai_use_solution_chunks = ai_use_solution_chunks
         self.install_python_dependencies = install_python_dependencies
@@ -207,6 +215,7 @@ class RepositoryRefreshWorker(QObject):
             use_cache=False,
             install_python_dependencies=self.install_python_dependencies,
             ai_use_solution_chunks=self.ai_use_solution_chunks,
+            ruff_settings=self.ruff_settings,
         )
         tests = tests_results[0] if tests_results else TestRunResult()
 
@@ -214,7 +223,7 @@ class RepositoryRefreshWorker(QObject):
         file_rows = _parse_status_rows(status_lines)
         use_case = WorkingTreeReportUseCase(
             self.git_backend,
-            RuffRunner(),
+            RuffRunner(self.ruff_settings),
             PytestRunner(install_dependencies=self.install_python_dependencies),
             build_diff_ai_backend(self.ai_config),
             self.store,
@@ -457,6 +466,7 @@ class MainWindow(QMainWindow):
         self.menu.code_editor.triggered.connect(self._open_editor_settings)
         self.menu.ai_model.triggered.connect(self._open_ai_settings)
         self.menu.quality_grades.triggered.connect(self._open_quality_settings)
+        self.menu.ruff_rules.triggered.connect(self._open_ruff_settings)
 
         self.tabs.commits_tab.commit_selected.connect(self._show_commit_in_status)
         self.tabs.commits_tab.ai_summary_requested.connect(self._describe_commit_with_ai)
@@ -477,6 +487,11 @@ class MainWindow(QMainWindow):
 
     def _open_quality_settings(self) -> None:
         dialog = QualitySettingsDialog(self.state_store, self)
+        if dialog.exec() == QDialog.DialogCode.Accepted and self.current_repo:
+            self._refresh_current()
+
+    def _open_ruff_settings(self) -> None:
+        dialog = RuffSettingsDialog(self.state_store, self)
         if dialog.exec() == QDialog.DialogCode.Accepted and self.current_repo:
             self._refresh_current()
 
@@ -877,6 +892,7 @@ class MainWindow(QMainWindow):
             git_backend=self.git_backend,
             store=self.store,
             thresholds=self.state_store.quality_thresholds(),
+            ruff_settings=self.state_store.ruff_settings(),
             ai_config=self._ai_config(),
             ai_use_solution_chunks=self.state_store.ai_settings().use_solution_chunks,
             install_python_dependencies=install_python_dependencies,
@@ -1075,6 +1091,7 @@ class MainWindow(QMainWindow):
             metric_details=metric_details,
             install_python_dependencies=install_python_dependencies,
             ai_use_solution_chunks=ai_use_solution_chunks,
+            ruff_settings=self.state_store.ruff_settings(),
         )
 
     def _calculate_ai_signal_metric(self, repo_path: Path) -> tuple[str, str, str]:
@@ -1306,7 +1323,7 @@ class MainWindow(QMainWindow):
 
         use_case = WorkingTreeReportUseCase(
             self.git_backend,
-            RuffRunner(),
+            RuffRunner(self.state_store.ruff_settings()),
             PytestRunner(install_dependencies=install_python_dependencies),
             build_diff_ai_backend(self._ai_config()),
             self.store,
@@ -2078,6 +2095,7 @@ def _calculate_quality_metrics(
     use_cache: bool = True,
     install_python_dependencies: bool = True,
     ai_use_solution_chunks: bool = True,
+    ruff_settings: RuffSettings | None = None,
 ) -> dict[str, MetricValue]:
     kloc = max(loc / 1000.0, 0.001)
     metrics: dict[str, MetricValue] = {}
@@ -2086,7 +2104,7 @@ def _calculate_quality_metrics(
         if on_metric_result:
             on_metric_result(metric_name, metrics[metric_name])
 
-    ruff_issues = RuffRunner().run(repo_path)
+    ruff_issues = RuffRunner(ruff_settings).run(repo_path, tracked_files=tracked_files)
     lint_issues = [issue for issue in ruff_issues if issue.severity in {"warning", "error"}]
     lint_count = len(lint_issues)
     lint_per_kloc = lint_count / kloc
@@ -2314,7 +2332,7 @@ def _build_workspace_files_payload(file_rows: list[dict[str, str]], issues: list
         if not path:
             continue
         issues_by_file[path] = issues_by_file.get(path, 0) + 1
-        if issue.tool == "ruff":
+        if issue.tool in {"ruff", "custom-rule"}:
             lint_by_file[path] = lint_by_file.get(path, 0) + 1
     failed_tests = tests.failed_tests if tests else []
 

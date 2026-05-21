@@ -18,6 +18,7 @@ class AppMenuActions:
     code_editor: QAction
     ai_model: QAction
     quality_grades: QAction
+    ruff_rules: QAction
 
 
 def build_menu(window: QMainWindow) -> AppMenuActions:
@@ -42,6 +43,7 @@ def build_menu(window: QMainWindow) -> AppMenuActions:
     code_editor = settings_menu.addAction("Code Editor")
     ai_model = settings_menu.addAction("AI Model")
     quality_grades = settings_menu.addAction("Quality Grades")
+    ruff_rules = settings_menu.addAction("Ruff Rules")
 
     menu_bar.addMenu("Help")
 
@@ -56,4 +58,5 @@ def build_menu(window: QMainWindow) -> AppMenuActions:
         code_editor=code_editor,
         ai_model=ai_model,
         quality_grades=quality_grades,
+        ruff_rules=ruff_rules,
     )

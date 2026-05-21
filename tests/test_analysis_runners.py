@@ -17,6 +17,7 @@ from analyze_app.infrastructure.analysis.python_environment import (
 from analyze_app.infrastructure.analysis.pytest_runner import PytestRunner
 from analyze_app.infrastructure.analysis.radon_runner import RadonRunner
 from analyze_app.infrastructure.analysis.ruff_runner import RuffRunner
+from analyze_app.infrastructure.analysis.ruff_settings import RegexRule, RuffSettings
 from analyze_app.infrastructure.analysis.vulture_runner import VultureRunner
 
 
@@ -62,6 +63,68 @@ def test_ruff_reports_unexpected_issue_payload(monkeypatch) -> None:
 
     assert any(issue.file == "ok.py" and issue.line == 4 for issue in issues)
     assert any(issue.message == "ruff returned unexpected issue payload" for issue in issues)
+
+
+def test_ruff_runner_applies_rule_settings(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_run(command, *args, **kwargs):
+        captured["command"] = command
+        return _completed([])
+
+    monkeypatch.setattr(ruff_runner.subprocess, "run", fake_run)
+
+    settings = RuffSettings(
+        mode="override",
+        select=["E", "F", "B"],
+        ignore=["E501", "S101"],
+        preview=True,
+    )
+    RuffRunner(settings).run(Path("."))
+
+    assert captured["command"] == [
+        "ruff",
+        "check",
+        ".",
+        "--output-format",
+        "json",
+        "--select",
+        "E,F,B",
+        "--ignore",
+        "E501,S101",
+        "--preview",
+    ]
+
+
+def test_ruff_runner_reports_forbidden_custom_call(monkeypatch, tmp_path) -> None:
+    (tmp_path / "main.py").write_text("print('debug')\n", encoding="utf-8")
+    monkeypatch.setattr(ruff_runner.subprocess, "run", lambda *args, **kwargs: _completed([]))
+
+    issues = RuffRunner(RuffSettings(forbidden_calls=["print"])).run(tmp_path)
+
+    assert any(
+        issue.tool == "custom-rule"
+        and issue.file == "main.py"
+        and issue.line == 1
+        and "forbidden call: print" in issue.message
+        for issue in issues
+    )
+
+
+def test_ruff_runner_reports_custom_regex_rule(monkeypatch, tmp_path) -> None:
+    (tmp_path / "main.py").write_text("value = 'TODO'\n", encoding="utf-8")
+    monkeypatch.setattr(ruff_runner.subprocess, "run", lambda *args, **kwargs: _completed([]))
+
+    settings = RuffSettings(regex_rules=[RegexRule(pattern="TODO", message="TODO is forbidden")])
+    issues = RuffRunner(settings).run(tmp_path)
+
+    assert any(
+        issue.tool == "custom-rule"
+        and issue.file == "main.py"
+        and issue.line == 1
+        and "TODO is forbidden" in issue.message
+        for issue in issues
+    )
 
 
 def test_pytest_runner_streams_completed_tests(monkeypatch) -> None:

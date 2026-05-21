@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 
 from PySide6.QtWidgets import (
@@ -16,11 +17,13 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QMessageBox,
+    QPlainTextEdit,
     QPushButton,
     QSpinBox,
     QVBoxLayout,
 )
 
+from analyze_app.infrastructure.analysis.ruff_settings import RUFF_RULE_GROUPS, RegexRule, RuffSettings
 from analyze_app.presentation.qt_shell.state_store import AISettings, DEFAULT_QUALITY_THRESHOLDS, UiStateStore
 
 
@@ -150,6 +153,210 @@ class QualitySettingsDialog(QDialog):
 
         self.state_store.set_quality_thresholds(parsed)
         self.accept()
+
+
+class RuffSettingsDialog(QDialog):
+    def __init__(self, state_store: UiStateStore, parent=None) -> None:
+        super().__init__(parent)
+        self.state_store = state_store
+        self.setWindowTitle("Ruff Rules")
+        self.setMinimumSize(860, 620)
+
+        current = self.state_store.ruff_settings()
+        known_codes = {code for code, _label in RUFF_RULE_GROUPS}
+        extra_select = [code for code in current.select if code not in known_codes]
+
+        root = QVBoxLayout(self)
+        intro = QLabel(
+            "Настройки Ruff применяются при анализе репозитория. В режиме repository config AnalyzeApp "
+            "не передает Ruff дополнительные select/ignore параметры."
+        )
+        intro.setWordWrap(True)
+        root.addWidget(intro)
+
+        ruff_group = QGroupBox("Built-in Ruff rules")
+        ruff_layout = QVBoxLayout(ruff_group)
+        form = QFormLayout()
+
+        self.mode_combo = QComboBox()
+        self.mode_combo.addItem("Repository config", "respect")
+        self.mode_combo.addItem("Extend repository config", "extend")
+        self.mode_combo.addItem("AnalyzeApp profile", "override")
+        self.mode_combo.setCurrentIndex(max(self.mode_combo.findData(current.mode), 0))
+        form.addRow("Mode", self.mode_combo)
+
+        self.preview_checkbox = QCheckBox("Enable Ruff preview rules")
+        self.preview_checkbox.setChecked(current.preview)
+        form.addRow("Preview", self.preview_checkbox)
+
+        ruff_layout.addLayout(form)
+
+        checks_group = QGroupBox("Selected groups")
+        checks_grid = QGridLayout(checks_group)
+        self.rule_checks: dict[str, QCheckBox] = {}
+        for index, (code, label) in enumerate(RUFF_RULE_GROUPS):
+            checkbox = QCheckBox(f"{code} - {label}")
+            checkbox.setChecked(code in current.select)
+            self.rule_checks[code] = checkbox
+            checks_grid.addWidget(checkbox, index // 2, index % 2)
+        ruff_layout.addWidget(checks_group)
+
+        advanced_form = QFormLayout()
+        self.extra_select = QLineEdit(", ".join(extra_select))
+        self.extra_select.setPlaceholderText("ANN, C4, N, PTH")
+        advanced_form.addRow("Extra select", self.extra_select)
+
+        self.ignore_codes = QLineEdit(", ".join(current.ignore))
+        self.ignore_codes.setPlaceholderText("E501, S101")
+        advanced_form.addRow("Ignore", self.ignore_codes)
+        ruff_layout.addLayout(advanced_form)
+        root.addWidget(ruff_group)
+
+        custom_group = QGroupBox("Simple custom rules")
+        custom_layout = QVBoxLayout(custom_group)
+        self.custom_enabled = QCheckBox("Run simple custom rules after Ruff")
+        self.custom_enabled.setChecked(current.custom_rules_enabled)
+        custom_layout.addWidget(self.custom_enabled)
+
+        calls_row = QHBoxLayout()
+        self.forbidden_calls = QLineEdit(", ".join(current.forbidden_calls))
+        self.forbidden_calls.setPlaceholderText("print, breakpoint, pdb.set_trace")
+        add_print_button = QPushButton("Add print")
+        add_print_button.clicked.connect(self._add_print_rule)
+        calls_row.addWidget(self.forbidden_calls, 1)
+        calls_row.addWidget(add_print_button)
+
+        calls_form = QFormLayout()
+        calls_form.addRow("Forbidden calls", calls_row)
+        custom_layout.addLayout(calls_form)
+
+        regex_label = QLabel("Regex rules: one line per rule, format pattern :: message.")
+        regex_label.setWordWrap(True)
+        custom_layout.addWidget(regex_label)
+
+        self.regex_rules = QPlainTextEdit(self._format_regex_rules(current.regex_rules))
+        self.regex_rules.setPlaceholderText(r"TODO|FIXME :: unfinished marker is not allowed")
+        self.regex_rules.setMinimumHeight(120)
+        custom_layout.addWidget(self.regex_rules)
+        root.addWidget(custom_group)
+
+        reset_row = QHBoxLayout()
+        reset_row.addStretch()
+        reset_button = QPushButton("Reset")
+        reset_button.clicked.connect(self._reset_to_defaults)
+        reset_row.addWidget(reset_button)
+        root.addLayout(reset_row)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        buttons.accepted.connect(self._accept)
+        buttons.rejected.connect(self.reject)
+        root.addWidget(buttons)
+
+    def _add_print_rule(self) -> None:
+        calls = self._parse_forbidden_calls(self.forbidden_calls.text())
+        if "print" not in calls:
+            calls.append("print")
+        self.forbidden_calls.setText(", ".join(calls))
+
+    def _reset_to_defaults(self) -> None:
+        defaults = RuffSettings()
+        self.mode_combo.setCurrentIndex(max(self.mode_combo.findData(defaults.mode), 0))
+        for code, checkbox in self.rule_checks.items():
+            checkbox.setChecked(code in defaults.select)
+        self.extra_select.clear()
+        self.ignore_codes.clear()
+        self.preview_checkbox.setChecked(defaults.preview)
+        self.custom_enabled.setChecked(defaults.custom_rules_enabled)
+        self.forbidden_calls.clear()
+        self.regex_rules.clear()
+
+    def _accept(self) -> None:
+        calls = self._parse_forbidden_calls(self.forbidden_calls.text())
+        invalid_calls = [call for call in calls if not self._is_valid_call_name(call)]
+        if invalid_calls:
+            QMessageBox.warning(
+                self,
+                "Некорректное правило",
+                f"Недопустимое имя вызова: {', '.join(invalid_calls)}",
+            )
+            return
+
+        regex_rules = self._parse_regex_rules()
+        if regex_rules is None:
+            return
+
+        selected = [code for code, checkbox in self.rule_checks.items() if checkbox.isChecked()]
+        selected.extend(code for code in self._parse_code_list(self.extra_select.text()) if code not in selected)
+
+        self.state_store.set_ruff_settings(
+            RuffSettings(
+                mode=str(self.mode_combo.currentData()),  # type: ignore[arg-type]
+                select=selected,
+                ignore=self._parse_code_list(self.ignore_codes.text()),
+                preview=self.preview_checkbox.isChecked(),
+                custom_rules_enabled=self.custom_enabled.isChecked(),
+                forbidden_calls=calls,
+                regex_rules=regex_rules,
+            )
+        )
+        self.accept()
+
+    def _parse_regex_rules(self) -> list[RegexRule] | None:
+        rules: list[RegexRule] = []
+        for line_no, raw_line in enumerate(self.regex_rules.toPlainText().splitlines(), start=1):
+            line = raw_line.strip()
+            if not line or line.startswith("#"):
+                continue
+            pattern, separator, message = line.partition("::")
+            pattern = pattern.strip()
+            message = message.strip() if separator else ""
+            if not pattern:
+                continue
+            try:
+                re.compile(pattern)
+            except re.error as error:
+                QMessageBox.warning(
+                    self,
+                    "Некорректное regex-правило",
+                    f"Строка {line_no}: {error}",
+                )
+                return None
+            rules.append(RegexRule(pattern=pattern, message=message))
+        return rules
+
+    @staticmethod
+    def _format_regex_rules(rules: list[RegexRule]) -> str:
+        lines: list[str] = []
+        for rule in rules:
+            if not rule.enabled:
+                continue
+            line = rule.pattern.strip()
+            if rule.message.strip():
+                line = f"{line} :: {rule.message.strip()}"
+            lines.append(line)
+        return "\n".join(lines)
+
+    @staticmethod
+    def _parse_code_list(value: str) -> list[str]:
+        parsed: list[str] = []
+        for item in value.replace(",", " ").split():
+            code = item.strip().upper()
+            if code and code not in parsed:
+                parsed.append(code)
+        return parsed
+
+    @staticmethod
+    def _parse_forbidden_calls(value: str) -> list[str]:
+        parsed: list[str] = []
+        for item in value.replace(",", " ").split():
+            call_name = item.strip()
+            if call_name and call_name not in parsed:
+                parsed.append(call_name)
+        return parsed
+
+    @staticmethod
+    def _is_valid_call_name(value: str) -> bool:
+        return bool(re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*", value))
 
 
 class CodeEditorSettingsDialog(QDialog):
