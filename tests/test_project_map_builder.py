@@ -60,6 +60,31 @@ def test_python_project_links_local_imports_between_files(tmp_path) -> None:
     assert ("file:pkg/a.py", "module:os", "imports") in edges
 
 
+def test_python_project_can_omit_file_import_links(tmp_path) -> None:
+    package = tmp_path / "pkg"
+    package.mkdir()
+    (package / "__init__.py").write_text("", encoding="utf-8")
+    (package / "a.py").write_text(
+        "import os\n"
+        "from .b import Thing\n"
+        "def run():\n"
+        "    return Thing()\n",
+        encoding="utf-8",
+    )
+    (package / "b.py").write_text("class Thing:\n    pass\n", encoding="utf-8")
+
+    graph = AstMapBuilder().build(
+        tmp_path,
+        tracked_files=["pkg/__init__.py", "pkg/a.py", "pkg/b.py"],
+        include_file_links=False,
+    )
+
+    edges = {(edge.source, edge.target, edge.relation) for edge in graph.edges}
+    assert ("file:pkg/a.py", "file:pkg/b.py", "imports") not in edges
+    assert ("file:pkg/a.py", "module:os", "imports") not in edges
+    assert any(edge.relation == "contains" for edge in graph.edges)
+
+
 def test_large_python_project_uses_file_hotspot_map(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr(ast_map_builder, "LARGE_AST_FILE_THRESHOLD", 1)
     package = tmp_path / "pkg"
@@ -85,6 +110,23 @@ def test_large_python_project_uses_file_hotspot_map(monkeypatch, tmp_path) -> No
     assert all(node.kind == "file" for node in graph.nodes)
     assert {node.path for node in graph.nodes} == {"pkg/a.py", "pkg/b.py", "README.md"}
     assert next(node for node in graph.nodes if node.path == "pkg/a.py").hotspot_score == 12
+
+
+def test_large_python_project_can_omit_file_import_links(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(ast_map_builder, "LARGE_AST_FILE_THRESHOLD", 1)
+    package = tmp_path / "pkg"
+    package.mkdir()
+    (package / "a.py").write_text("from pkg import b\n", encoding="utf-8")
+    (package / "b.py").write_text("VALUE = 1\n", encoding="utf-8")
+
+    graph = AstMapBuilder().build(
+        tmp_path,
+        tracked_files=["pkg/a.py", "pkg/b.py"],
+        include_file_links=False,
+    )
+
+    assert graph.edges == []
+    assert {node.path for node in graph.nodes} == {"pkg/a.py", "pkg/b.py"}
 
 
 def test_large_non_python_project_uses_file_hotspot_map(monkeypatch, tmp_path) -> None:

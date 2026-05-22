@@ -78,6 +78,7 @@ class AstMapBuilder:
         repo_path: Path,
         churn: dict[str, int] | None = None,
         tracked_files: list[str] | None = None,
+        include_file_links: bool = True,
     ) -> ProjectGraph:
         churn = churn or {}
         nodes: list[GraphNode] = []
@@ -89,9 +90,11 @@ class AstMapBuilder:
         ]
 
         if len(python_files) > LARGE_AST_FILE_THRESHOLD:
-            return _build_file_hotspot_map(repo_path, churn, tracked_files)
+            return _build_file_hotspot_map(repo_path, churn, tracked_files, include_file_links=include_file_links)
 
-        import_edges = _build_python_file_import_edges(repo_path, python_files, include_external=True)
+        import_edges = []
+        if include_file_links:
+            import_edges = _build_python_file_import_edges(repo_path, python_files, include_external=True)
         for rel_path in python_files:
             rel_parts = tuple(rel_path.split("/"))
             py_file = repo_path.joinpath(*rel_parts)
@@ -153,11 +156,13 @@ class AstMapBuilder:
         if not nodes:
             project_files = _visible_project_files(repo_path, tracked_files)
             if len(project_files) > LARGE_PROJECT_FILE_THRESHOLD:
-                import_edges = _build_python_file_import_edges(
-                    repo_path,
-                    _python_paths_from(project_files),
-                    include_external=False,
-                )
+                import_edges = []
+                if include_file_links:
+                    import_edges = _build_python_file_import_edges(
+                        repo_path,
+                        _python_paths_from(project_files),
+                        include_external=False,
+                    )
                 return _build_file_hotspot_map_from_paths(project_files, churn, import_edges)
             return _build_generic_file_map_from_paths(project_files, churn)
         return ProjectGraph(nodes=nodes, edges=[*edges, *import_edges])
@@ -189,13 +194,17 @@ def _build_file_hotspot_map(
     repo_path: Path,
     churn: dict[str, int],
     tracked_files: list[str] | None,
+    *,
+    include_file_links: bool = True,
 ) -> ProjectGraph:
     project_files = _visible_project_files(repo_path, tracked_files)
-    import_edges = _build_python_file_import_edges(
-        repo_path,
-        _python_paths_from(project_files),
-        include_external=False,
-    )
+    import_edges = []
+    if include_file_links:
+        import_edges = _build_python_file_import_edges(
+            repo_path,
+            _python_paths_from(project_files),
+            include_external=False,
+        )
     return _build_file_hotspot_map_from_paths(project_files, churn, import_edges)
 
 

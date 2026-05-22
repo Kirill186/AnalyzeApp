@@ -17,6 +17,7 @@ class AppMenuActions:
     toggle_sidebar: QAction
     code_editor: QAction
     ai_model: QAction
+    project_map: QAction
     quality_grades: QAction
     ruff_rules: QAction
 
@@ -42,6 +43,7 @@ def build_menu(window: QMainWindow) -> AppMenuActions:
     settings_menu = menu_bar.addMenu("Settings")
     code_editor = settings_menu.addAction("Code Editor")
     ai_model = settings_menu.addAction("AI Model")
+    project_map = settings_menu.addAction("Project Map")
     quality_grades = settings_menu.addAction("Quality Grades")
     ruff_rules = settings_menu.addAction("Ruff Rules")
 
@@ -57,6 +59,7 @@ def build_menu(window: QMainWindow) -> AppMenuActions:
         toggle_sidebar=toggle_sidebar,
         code_editor=code_editor,
         ai_model=ai_model,
+        project_map=project_map,
         quality_grades=quality_grades,
         ruff_rules=ruff_rules,
     )

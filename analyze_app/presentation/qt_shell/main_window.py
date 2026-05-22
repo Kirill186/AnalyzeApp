@@ -65,6 +65,7 @@ from analyze_app.presentation.qt_shell.report_tabs import ReportTabs
 from analyze_app.presentation.qt_shell.settings_dialog import (
     AISettingsDialog,
     CodeEditorSettingsDialog,
+    ProjectMapSettingsDialog,
     QualitySettingsDialog,
     RuffSettingsDialog,
 )
@@ -285,12 +286,20 @@ class ProjectMapBuildWorker(QObject):
     finished = Signal(object)
     failed = Signal(int, str)
 
-    def __init__(self, repo_id: int, repo_path: Path, git_backend: GitBackend, store: DatabaseStore) -> None:
+    def __init__(
+        self,
+        repo_id: int,
+        repo_path: Path,
+        git_backend: GitBackend,
+        store: DatabaseStore,
+        include_file_links: bool,
+    ) -> None:
         super().__init__()
         self.repo_id = repo_id
         self.repo_path = repo_path
         self.git_backend = git_backend
         self.store = store
+        self.include_file_links = include_file_links
 
     @Slot()
     def run(self) -> None:
@@ -299,6 +308,7 @@ class ProjectMapBuildWorker(QObject):
                 self.repo_id,
                 self.repo_path,
                 use_cache=False,
+                include_file_links=self.include_file_links,
             )
         except Exception as error:  # noqa: BLE001
             self.failed.emit(self.repo_id, str(error))
@@ -474,6 +484,7 @@ class MainWindow(QMainWindow):
         self.menu.toggle_sidebar.triggered.connect(lambda: self.sidebar.setVisible(not self.sidebar.isVisible()))
         self.menu.code_editor.triggered.connect(self._open_editor_settings)
         self.menu.ai_model.triggered.connect(self._open_ai_settings)
+        self.menu.project_map.triggered.connect(self._open_project_map_settings)
         self.menu.quality_grades.triggered.connect(self._open_quality_settings)
         self.menu.ruff_rules.triggered.connect(self._open_ruff_settings)
 
@@ -514,6 +525,15 @@ class MainWindow(QMainWindow):
         if dialog.exec() == QDialog.DialogCode.Accepted:
             self.status.showMessage("Code editor settings saved.", 4_000)
 
+    def _open_project_map_settings(self) -> None:
+        dialog = ProjectMapSettingsDialog(self.state_store, self)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        if self.current_repo:
+            self._refresh_map()
+        else:
+            self.status.showMessage("Project map settings saved.", 4_000)
+
     def _ai_config(self) -> AppConfig:
         ai_settings = self.state_store.ai_settings()
         return replace(
@@ -525,6 +545,14 @@ class MainWindow(QMainWindow):
             llm_gpu_layers=ai_settings.gpu_layers,
             ollama_url=ai_settings.ollama_url,
             ollama_model=ai_settings.ollama_model,
+        )
+
+    def _project_map_for_current_settings(self, project_map: ProjectGraph) -> ProjectGraph:
+        if self.state_store.project_map_settings().include_file_links:
+            return project_map
+        return ProjectGraph(
+            nodes=project_map.nodes,
+            edges=[edge for edge in project_map.edges if edge.relation != "imports"],
         )
 
     def _load_repositories(self) -> None:
@@ -657,7 +685,7 @@ class MainWindow(QMainWindow):
         self.tabs.commits_tab.clear()
         cached_map = self.store.load_project_map(self.current_repo.repo_id)
         if cached_map and cached_map.nodes:
-            self.tabs.project_map_tab.set_project_map(cached_map)
+            self.tabs.project_map_tab.set_project_map(self._project_map_for_current_settings(cached_map))
         else:
             self.tabs.project_map_tab.clear()
         self.tabs.workspace_tab.clear()
@@ -1026,7 +1054,7 @@ class MainWindow(QMainWindow):
         self.tabs.overview_tab.load_readme(result.repo_path)
         self.tabs.commits_tab.set_commits(result.commits)
         if result.project_map is not None:
-            self.tabs.project_map_tab.set_project_map(result.project_map)
+            self.tabs.project_map_tab.set_project_map(self._project_map_for_current_settings(result.project_map))
         if self.current_repo and self.current_repo.source_type == "local":
             self.tabs.workspace_tab.set_working_tree_data(
                 result.workspace_files,
@@ -1282,11 +1310,18 @@ class MainWindow(QMainWindow):
 
         repo_id = self.current_repo.repo_id
         repo_path = Path(self.current_repo.working_path)
+        map_settings = self.state_store.project_map_settings()
         self.tabs.project_map_tab.set_loading()
         self.status.showMessage(f"Project map build started: {self.current_repo.title}", 4_000)
 
         self.map_thread = QThread(self)
-        self.map_worker = ProjectMapBuildWorker(repo_id, repo_path, self.git_backend, self.store)
+        self.map_worker = ProjectMapBuildWorker(
+            repo_id,
+            repo_path,
+            self.git_backend,
+            self.store,
+            include_file_links=map_settings.include_file_links,
+        )
         self.map_worker.moveToThread(self.map_thread)
         self.map_thread.started.connect(self.map_worker.run)
         self.map_worker.finished.connect(self._on_map_build_finished)
@@ -1299,9 +1334,10 @@ class MainWindow(QMainWindow):
     @Slot(object)
     def _on_map_build_finished(self, result: ProjectMapBuildResult) -> None:
         if self.current_repo and self.current_repo.repo_id == result.repo_id:
-            self.tabs.project_map_tab.set_project_map(result.project_map)
+            project_map = self._project_map_for_current_settings(result.project_map)
+            self.tabs.project_map_tab.set_project_map(project_map)
             self.status.showMessage(
-                f"Project map updated: nodes={len(result.project_map.nodes)}, edges={len(result.project_map.edges)}",
+                f"Project map updated: nodes={len(project_map.nodes)}, edges={len(project_map.edges)}",
                 5_000,
             )
 
@@ -1310,7 +1346,7 @@ class MainWindow(QMainWindow):
         if self.current_repo and self.current_repo.repo_id == repo_id:
             cached_map = self.store.load_project_map(repo_id)
             if cached_map and cached_map.nodes:
-                self.tabs.project_map_tab.set_project_map(cached_map)
+                self.tabs.project_map_tab.set_project_map(self._project_map_for_current_settings(cached_map))
             else:
                 self.tabs.project_map_tab.clear()
             self.status.showMessage(f"Project map build failed: {error}", 8_000)

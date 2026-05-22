@@ -59,6 +59,11 @@ class AISettings:
     authorship_calibration_profile: CalibrationProfile = DEFAULT_CALIBRATION_PROFILE
 
 
+@dataclass(slots=True)
+class ProjectMapSettings:
+    include_file_links: bool = True
+
+
 class UiStateStore:
     def __init__(self) -> None:
         self.settings = QSettings("AnalyzeApp", "AnalyzeAppDesktop")
@@ -299,6 +304,17 @@ class UiStateStore:
             "ai/authorship_calibration_profile",
             normalize_calibration_profile(settings.authorship_calibration_profile),
         )
+
+    def project_map_settings(self) -> ProjectMapSettings:
+        return ProjectMapSettings(
+            include_file_links=_coerce_bool(
+                self.settings.value("project_map/include_file_links", True),
+                True,
+            )
+        )
+
+    def set_project_map_settings(self, settings: ProjectMapSettings) -> None:
+        self.settings.setValue("project_map/include_file_links", bool(settings.include_file_links))
 
 
 def _coerce_int_list(values: list[object]) -> list[int]:

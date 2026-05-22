@@ -24,7 +24,12 @@ from PySide6.QtWidgets import (
 )
 
 from analyze_app.infrastructure.analysis.ruff_settings import RUFF_RULE_GROUPS, RegexRule, RuffSettings
-from analyze_app.presentation.qt_shell.state_store import AISettings, DEFAULT_QUALITY_THRESHOLDS, UiStateStore
+from analyze_app.presentation.qt_shell.state_store import (
+    AISettings,
+    DEFAULT_QUALITY_THRESHOLDS,
+    ProjectMapSettings,
+    UiStateStore,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -405,6 +410,47 @@ class CodeEditorSettingsDialog(QDialog):
 
     def _accept(self) -> None:
         self.state_store.set_editor_command(self.editor_command.text())
+        self.accept()
+
+
+class ProjectMapSettingsDialog(QDialog):
+    def __init__(self, state_store: UiStateStore, parent=None) -> None:
+        super().__init__(parent)
+        self.state_store = state_store
+        self.setWindowTitle("Project Map")
+        self.setMinimumWidth(620)
+
+        current = self.state_store.project_map_settings()
+
+        root = QVBoxLayout(self)
+        group = QGroupBox("Generation")
+        group_layout = QVBoxLayout(group)
+
+        self.include_file_links = QCheckBox("Include import links between files")
+        self.include_file_links.setChecked(current.include_file_links)
+        self.include_file_links.setToolTip(
+            "Disable this to generate the project map like older versions, without file-to-file import edges."
+        )
+        group_layout.addWidget(self.include_file_links)
+
+        hint = QLabel(
+            "When disabled, classes and functions are still shown for small Python projects, "
+            "but import relationships between files are omitted."
+        )
+        hint.setWordWrap(True)
+        group_layout.addWidget(hint)
+
+        root.addWidget(group)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        buttons.accepted.connect(self._accept)
+        buttons.rejected.connect(self.reject)
+        root.addWidget(buttons)
+
+    def _accept(self) -> None:
+        self.state_store.set_project_map_settings(
+            ProjectMapSettings(include_file_links=self.include_file_links.isChecked())
+        )
         self.accept()
 
 

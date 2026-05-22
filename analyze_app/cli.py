@@ -89,7 +89,13 @@ def cmd_working_tree_report(args: argparse.Namespace) -> None:
 def cmd_project_map(args: argparse.Namespace) -> None:
     git_backend, store, *_ = _build_services(args.db)
     use_case = BuildProjectMapUseCase(git_backend, AstMapBuilder(), store)
-    project_map = use_case.execute(args.repo_id, Path(args.repo_path), max_commits=args.max_commits, use_cache=not args.no_cache)
+    project_map = use_case.execute(
+        args.repo_id,
+        Path(args.repo_path),
+        max_commits=args.max_commits,
+        use_cache=not args.no_cache,
+        include_file_links=not args.no_file_links,
+    )
 
     print(f"project map: nodes={len(project_map.nodes)} edges={len(project_map.edges)}")
     hot_files = sorted((node for node in project_map.nodes if node.kind == "file"), key=lambda n: n.hotspot_score, reverse=True)
@@ -231,6 +237,7 @@ def main() -> None:
     map_parser.add_argument("--max-commits", type=int, default=200)
     map_parser.add_argument("--top", type=int, default=10)
     map_parser.add_argument("--no-cache", action="store_true")
+    map_parser.add_argument("--no-file-links", action="store_true")
     map_parser.set_defaults(func=cmd_project_map)
 
     overview_parser = subparsers.add_parser(

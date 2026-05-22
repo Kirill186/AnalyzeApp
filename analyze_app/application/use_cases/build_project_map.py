@@ -14,13 +14,20 @@ class BuildProjectMapUseCase:
         self.map_builder = map_builder
         self.store = store
 
-    def execute(self, repo_id: int, repo_path: Path, max_commits: int = 200, use_cache: bool = True) -> ProjectGraph:
+    def execute(
+        self,
+        repo_id: int,
+        repo_path: Path,
+        max_commits: int = 200,
+        use_cache: bool = True,
+        include_file_links: bool = True,
+    ) -> ProjectGraph:
         if use_cache:
             cached = self.store.load_project_map(repo_id)
             # Самовосстановление после старого бага: пустая карта могла закэшироваться
             # для репозиториев внутри скрытых директорий (например, .analyze_repos).
             if cached and cached.nodes:
-                return cached
+                return cached if include_file_links else _without_file_links(cached)
 
         try:
             tracked_files = self.git_backend.list_tracked_files(repo_path)
@@ -30,6 +37,18 @@ class BuildProjectMapUseCase:
             churn = self.git_backend.file_churn(repo_path, max_commits=max_commits)
         except Exception:  # noqa: BLE001
             churn = {}
-        project_map = self.map_builder.build(repo_path, churn=churn, tracked_files=tracked_files)
+        project_map = self.map_builder.build(
+            repo_path,
+            churn=churn,
+            tracked_files=tracked_files,
+            include_file_links=include_file_links,
+        )
         self.store.save_project_map(repo_id, project_map)
         return project_map
+
+
+def _without_file_links(project_map: ProjectGraph) -> ProjectGraph:
+    return ProjectGraph(
+        nodes=project_map.nodes,
+        edges=[edge for edge in project_map.edges if edge.relation != "imports"],
+    )
