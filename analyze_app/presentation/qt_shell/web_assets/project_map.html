@@ -1179,14 +1179,20 @@
         : '<div class="muted">В этой группе пока нет соседних файлов.</div>';
     }
 
+    function screenToWorld(screenX, screenY) {
+      return {
+        x: (screenX - state.camera.x) / state.camera.scale,
+        y: (screenY - state.camera.y) / state.camera.scale,
+      };
+    }
+
     function pickNodeAt(screenX, screenY) {
-      const worldX = (screenX - state.camera.x) / state.camera.scale;
-      const worldY = (screenY - state.camera.y) / state.camera.scale;
+      const point = screenToWorld(screenX, screenY);
       const nodes = activeNodes();
       for (let i = nodes.length - 1; i >= 0; i -= 1) {
         const node = nodes[i];
-        const dx = worldX - node.x;
-        const dy = worldY - node.y;
+        const dx = point.x - node.x;
+        const dy = point.y - node.y;
         if (dx * dx + dy * dy <= (node.radius + 3) * (node.radius + 3)) {
           return node;
         }
@@ -1214,7 +1220,7 @@
       const modeHint = mode === MODE.LANDSCAPE
         ? 'Файлы сгруппированы по папкам, связи скрыты.'
         : 'Связи и вложенность отображаются ребрами.';
-      statusEl.textContent = `Mode: ${modeLabel}. ${modeHint} Управление: drag для панорамы, wheel для zoom, click по узлу для деталей.`;
+      statusEl.textContent = `Mode: ${modeLabel}. ${modeHint} Управление: drag узла для перемещения, drag пустого места для панорамы, wheel для zoom, click по узлу для деталей.`;
       setSelectedNode(activeNodes()[0] ? activeNodes()[0].id : null);
       if (mode !== MODE.LANDSCAPE && state.layoutTicks < layoutLimit()) {
         requestAnimationFrame(tick);
@@ -1238,19 +1244,36 @@
         if (filePath) sendToHost('open', filePath);
       });
 
-      let dragging = false;
+      let dragMode = null;
+      let draggedNode = null;
+      let dragMoved = false;
+      let suppressClick = false;
       let lastX = 0;
       let lastY = 0;
 
       canvas.addEventListener('mousedown', (event) => {
-        dragging = true;
-        canvas.classList.add('dragging');
+        const rect = canvas.getBoundingClientRect();
+        const x = event.clientX - rect.left;
+        const y = event.clientY - rect.top;
+        draggedNode = pickNodeAt(x, y);
+        dragMode = draggedNode ? 'node' : 'camera';
+        dragMoved = false;
         lastX = event.clientX;
         lastY = event.clientY;
+        canvas.classList.add('dragging');
+
+        if (draggedNode) {
+          state.layoutTicks = layoutLimit();
+          state.hoveredNodeId = draggedNode.id;
+          setSelectedNode(draggedNode.id);
+        }
       });
 
       window.addEventListener('mouseup', () => {
-        dragging = false;
+        suppressClick = dragMoved;
+        dragMode = null;
+        draggedNode = null;
+        dragMoved = false;
         canvas.classList.remove('dragging');
       });
 
@@ -1259,12 +1282,25 @@
         const x = event.clientX - rect.left;
         const y = event.clientY - rect.top;
 
-        if (dragging) {
+        if (dragMode) {
           const dx = event.clientX - lastX;
           const dy = event.clientY - lastY;
-          state.camera.x += dx;
-          state.camera.y += dy;
-          state.cameraDirty = true;
+          if (Math.abs(dx) + Math.abs(dy) > 0) {
+            dragMoved = true;
+          }
+
+          if (dragMode === 'node' && draggedNode) {
+            draggedNode.x += dx / state.camera.scale;
+            draggedNode.y += dy / state.camera.scale;
+            draggedNode.vx = 0;
+            draggedNode.vy = 0;
+            clampNodeToWorld(draggedNode);
+          } else {
+            state.camera.x += dx;
+            state.camera.y += dy;
+            state.cameraDirty = true;
+          }
+
           lastX = event.clientX;
           lastY = event.clientY;
           requestDraw();
@@ -1285,6 +1321,10 @@
       });
 
       canvas.addEventListener('click', (event) => {
+        if (suppressClick) {
+          suppressClick = false;
+          return;
+        }
         const rect = canvas.getBoundingClientRect();
         const x = event.clientX - rect.left;
         const y = event.clientY - rect.top;
