@@ -47,6 +47,7 @@ QUALITY_FIELDS: list[QualityField] = [
     QualityField("maintainability_avg_mi", "Поддержка", "средний MI", "upper", "", 1.0, 1, 100.0),
     QualityField("dead_code_findings_per_kloc", "Мёртвый код", "findings / KLOC", "lower", " /KLOC", 0.1, 1, 10_000.0),
     QualityField("duplication_pct", "Дубли", "дублирование", "lower", "%", 1.0, 1, 100.0),
+    QualityField("ai_authorship_probability_pct", "AI-оценка", "вероятность AI", "lower", "%", 1.0, 1, 100.0),
 ]
 
 

@@ -28,6 +28,7 @@ DEFAULT_QUALITY_THRESHOLDS: dict[str, list[float]] = {
     "maintainability_avg_mi": [85.0, 75.0, 65.0, 50.0],
     "dead_code_findings_per_kloc": [1.0, 3.0, 6.0, 10.0],
     "duplication_pct": [3.0, 6.0, 10.0, 15.0],
+    "ai_authorship_probability_pct": [20.0, 40.0, 60.0, 80.0],
 }
 
 

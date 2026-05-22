@@ -68,7 +68,7 @@ from analyze_app.presentation.qt_shell.settings_dialog import (
     QualitySettingsDialog,
     RuffSettingsDialog,
 )
-from analyze_app.presentation.qt_shell.state_store import RepoListItemVM, UiStateStore
+from analyze_app.presentation.qt_shell.state_store import DEFAULT_QUALITY_THRESHOLDS, RepoListItemVM, UiStateStore
 from analyze_app.presentation.qt_shell.theme import apply_theme
 from analyze_app.shared.config import AppConfig, DEFAULT_CONFIG
 
@@ -1144,6 +1144,7 @@ class MainWindow(QMainWindow):
             repo_path=repo_path,
             git_backend=self.git_backend,
             store=self.store,
+            thresholds=self.state_store.quality_thresholds(),
             use_cache=True,
             use_solution_chunks=ai_settings.use_solution_chunks,
             calibration_profile=ai_settings.authorship_calibration_profile,
@@ -2232,6 +2233,7 @@ def _calculate_quality_metrics(
         repo_path,
         git_backend,
         store,
+        thresholds=thresholds,
         use_cache=use_cache,
         use_solution_chunks=ai_use_solution_chunks,
         calibration_profile=ai_calibration_profile,
@@ -2270,6 +2272,7 @@ def _calculate_ai_signal_metric(
     repo_path: Path,
     git_backend: GitBackend,
     store: DatabaseStore,
+    thresholds: dict[str, list[float]] | None = None,
     use_cache: bool = True,
     use_solution_chunks: bool = True,
     calibration_profile: str = "balanced",
@@ -2279,6 +2282,7 @@ def _calculate_ai_signal_metric(
         repo_path,
         git_backend,
         store,
+        thresholds=thresholds,
         use_cache=use_cache,
         use_solution_chunks=use_solution_chunks,
         calibration_profile=calibration_profile,
@@ -2291,6 +2295,7 @@ def _calculate_ai_signal_metric_result(
     repo_path: Path,
     git_backend: GitBackend,
     store: DatabaseStore,
+    thresholds: dict[str, list[float]] | None = None,
     use_cache: bool = True,
     use_solution_chunks: bool = True,
     calibration_profile: str = "balanced",
@@ -2317,18 +2322,17 @@ def _calculate_ai_signal_metric_result(
         ]
 
     probability_pct = result.probability * 100.0
-    if probability_pct < 20:
-        grade = "A"
-    elif probability_pct < 40:
-        grade = "B"
-    elif probability_pct < 60:
-        grade = "C"
-    elif probability_pct < 80:
-        grade = "D"
-    else:
-        grade = "E"
+    ai_thresholds = (thresholds or {}).get(
+        "ai_authorship_probability_pct",
+        DEFAULT_QUALITY_THRESHOLDS["ai_authorship_probability_pct"],
+    )
+    grade = _grade_lower_better(probability_pct, ai_thresholds)
     analysis_mode = "solution-like куски" if use_solution_chunks else "целые .py файлы"
-    metric = grade, f"{probability_pct:.1f}% (данные {result.data_sufficiency:.2f})", "ниже — лучше"
+    metric = (
+        grade,
+        f"{probability_pct:.1f}% (данные {result.data_sufficiency:.2f})",
+        _fmt_thresholds("<=", ai_thresholds),
+    )
     details: list[MetricDetail] = [
         {
             "location": result.scope,
