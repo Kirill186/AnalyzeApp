@@ -130,6 +130,12 @@ class RepositoryRefreshResult:
 
 
 @dataclass(slots=True)
+class QueuedRepositoryRefresh:
+    repo_id: int
+    install_python_dependencies: bool | None = None
+
+
+@dataclass(slots=True)
 class ProjectMapBuildResult:
     repo_id: int
     project_map: ProjectGraph
@@ -431,7 +437,7 @@ class MainWindow(QMainWindow):
         self.workspace_git_thread: QThread | None = None
         self.workspace_git_worker: WorkspaceGitActionWorker | None = None
         self.active_refresh_repo_id: int | None = None
-        self.refresh_queue: list[int] = []
+        self.refresh_queue: list[QueuedRepositoryRefresh] = []
         self.refresh_all_running = False
 
         splitter = QSplitter(Qt.Horizontal)
@@ -852,7 +858,11 @@ class MainWindow(QMainWindow):
             return
 
         active_id = self.active_refresh_repo_id
-        self.refresh_queue = [repo.repo_id for repo in repos if repo.repo_id != active_id]
+        self.refresh_queue = [
+            QueuedRepositoryRefresh(repo.repo_id, install_python_dependencies=False)
+            for repo in repos
+            if repo.repo_id != active_id
+        ]
         self.refresh_all_running = True
         if self.refresh_thread is not None and self.refresh_thread.isRunning():
             self.status.showMessage(f"Refresh all queued: {len(self.refresh_queue)} repositories left.", 5_000)
@@ -878,16 +888,25 @@ class MainWindow(QMainWindow):
         if self.current_repo and self.current_repo.repo_id == repo.repo_id:
             self.tabs.commits_tab.set_commits(commits)
 
-    def _start_repository_refresh(self, repo: RepoListItemVM) -> bool:
+    def _start_repository_refresh(
+        self,
+        repo: RepoListItemVM,
+        *,
+        install_python_dependencies: bool | None = None,
+    ) -> bool:
         if self.refresh_thread is not None and self.refresh_thread.isRunning():
             if repo.repo_id == self.active_refresh_repo_id:
                 self.status.showMessage(f"Analysis already running: {repo.title}", 4_000)
                 return False
-            self._queue_repository_refresh(repo)
+            self._queue_repository_refresh(
+                repo,
+                install_python_dependencies=install_python_dependencies,
+            )
             self.status.showMessage(f"Analysis queued: {repo.title}", 4_000)
             return False
 
-        install_python_dependencies = self._confirm_python_dependency_install(repo)
+        if install_python_dependencies is None:
+            install_python_dependencies = self._confirm_python_dependency_install(repo)
         ai_settings = self.state_store.ai_settings()
         self.active_refresh_repo_id = repo.repo_id
         self.refresh_thread = QThread(self)
@@ -944,20 +963,33 @@ class MainWindow(QMainWindow):
         )
         return reply == QMessageBox.StandardButton.Yes
 
-    def _queue_repository_refresh(self, repo: RepoListItemVM) -> None:
+    def _queue_repository_refresh(
+        self,
+        repo: RepoListItemVM,
+        *,
+        install_python_dependencies: bool | None = None,
+    ) -> None:
         if repo.repo_id == self.active_refresh_repo_id:
             return
-        if repo.repo_id not in self.refresh_queue:
-            self.refresh_queue.append(repo.repo_id)
+        if not any(item.repo_id == repo.repo_id for item in self.refresh_queue):
+            self.refresh_queue.append(
+                QueuedRepositoryRefresh(
+                    repo.repo_id,
+                    install_python_dependencies=install_python_dependencies,
+                )
+            )
 
     def _start_next_queued_refresh(self) -> None:
         while self.refresh_queue:
-            repo_id = self.refresh_queue.pop(0)
-            repos = [repo for repo in self._repository_items() if repo.repo_id == repo_id]
+            queued_refresh = self.refresh_queue.pop(0)
+            repos = [repo for repo in self._repository_items() if repo.repo_id == queued_refresh.repo_id]
             if not repos:
                 continue
             repo = repos[0]
-            if self._start_repository_refresh(repo):
+            if self._start_repository_refresh(
+                repo,
+                install_python_dependencies=queued_refresh.install_python_dependencies,
+            ):
                 if self.current_repo and self.current_repo.repo_id == repo.repo_id:
                     self._show_repo_loading(repo)
                 else:
