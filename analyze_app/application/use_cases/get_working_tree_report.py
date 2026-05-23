@@ -38,7 +38,7 @@ class WorkingTreeReportUseCase:
 
         if use_cache:
             cached = self.store.load_working_tree_report(repo_id, status_key)
-            if cached:
+            if cached and self._is_cache_compatible(cached.ai_summary.model_info):
                 return cached
 
         diff_text = self.git_backend.read_working_tree_diff(repo_path)
@@ -59,3 +59,9 @@ class WorkingTreeReportUseCase:
         report = WorkingTreeReport(metrics=metrics, issues=issues, tests=tests, ai_summary=ai_summary)
         self.store.save_working_tree_report(repo_id, status_key, report)
         return report
+
+    def _is_cache_compatible(self, cached_model_info: str) -> bool:
+        prompt_version = getattr(self.ai_backend, "prompt_version", "")
+        if prompt_version and f"prompt={prompt_version}" not in cached_model_info:
+            return False
+        return cached_model_info.endswith(self.ai_backend.model)

@@ -7,18 +7,21 @@ from typing import Any
 
 from analyze_app.domain.entities import EvidenceBlock, LLMResult, ProjectOverviewResult
 from analyze_app.infrastructure.ai.ollama_cache import OLLAMA_MODEL_URI_PREFIX, resolve_ollama_model_uri
+from analyze_app.infrastructure.ai.prompts import DIFF_SUMMARY_PROMPT_VERSION, build_diff_summary_prompt
 
 _LLAMA_CACHE: dict[tuple[str, int, int, int], Any] = {}
 _LLAMA_CACHE_LOCK = Lock()
 
 DIFF_PROMPT_CHAR_LIMIT = 8000
 PROJECT_CONTEXT_CHAR_LIMIT = 12000
-DIFF_MAX_TOKENS = 260
+DIFF_MAX_TOKENS = 360
 PROJECT_MAX_TOKENS = 280
 LLAMA_BATCH_SIZE = 512
 
 
 class LlamaCppBackend:
+    prompt_version = DIFF_SUMMARY_PROMPT_VERSION
+
     def __init__(
         self,
         model_path: str | Path,
@@ -34,23 +37,19 @@ class LlamaCppBackend:
         self.n_gpu_layers = n_gpu_layers
 
     def summarize_diff(self, diff_text: str) -> LLMResult:
-        prompt = (
-            "Суммаризируй изменения. Ответь на русском в формате:\n"
-            "1) Что изменено\n2) Риски\n3) Рекомендации\n4) Evidence blocks (файл: причина).\n\n"
-            f"DIFF:\n{diff_text[:DIFF_PROMPT_CHAR_LIMIT]}"
-        )
+        prompt = build_diff_summary_prompt(diff_text, DIFF_PROMPT_CHAR_LIMIT)
 
         try:
-            text = self._generate(prompt, max_tokens=DIFF_MAX_TOKENS, temperature=0.1)
+            text = self._generate(prompt, max_tokens=DIFF_MAX_TOKENS, temperature=0.2)
             return LLMResult(
                 summary=text,
-                model_info=f"llama-cpp:{self.model}",
+                model_info=f"llama-cpp:prompt={self.prompt_version}:{self.model}",
                 evidence=self._extract_evidence(diff_text, text),
             )
         except Exception as exc:  # noqa: BLE001
             return LLMResult(
                 summary=f"AI summary unavailable: {self._humanize_error(exc)}",
-                model_info=f"llama-cpp:{self.model}",
+                model_info=f"llama-cpp:prompt={self.prompt_version}:{self.model}",
                 evidence=self._extract_evidence(diff_text, ""),
             )
 

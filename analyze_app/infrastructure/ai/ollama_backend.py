@@ -5,19 +5,22 @@ import re
 from urllib import request
 
 from analyze_app.domain.entities import EvidenceBlock, LLMResult
+from analyze_app.infrastructure.ai.prompts import DIFF_SUMMARY_PROMPT_VERSION, build_diff_summary_prompt
+
+
+DIFF_PROMPT_CHAR_LIMIT = 8000
+DIFF_MAX_TOKENS = 360
 
 
 class OllamaBackend:
+    prompt_version = DIFF_SUMMARY_PROMPT_VERSION
+
     def __init__(self, endpoint: str, model: str) -> None:
         self.endpoint = endpoint
         self.model = model
 
     def summarize_diff(self, diff_text: str) -> LLMResult:
-        prompt = (
-            "Суммаризируй изменения. Ответь на русском в формате:\n"
-            "1) Что изменено\n2) Риски\n3) Рекомендации\n4) Evidence blocks (файл: причина).\n\n"
-            f"DIFF:\n{diff_text[:8000]}"
-        )
+        prompt = build_diff_summary_prompt(diff_text, DIFF_PROMPT_CHAR_LIMIT)
 
         # Основной путь: локальный SDK ollama (как в вашем рабочем скрипте).
         try:
@@ -26,19 +29,34 @@ class OllamaBackend:
             response = ollama.generate(
                 model=self.model,
                 prompt=prompt,
-                options={"temperature": 0.1, "top_p": 0.9, "repeat_penalty": 1.1, "num_predict": 260},
+                options={
+                    "temperature": 0.2,
+                    "top_p": 0.9,
+                    "repeat_penalty": 1.1,
+                    "num_predict": DIFF_MAX_TOKENS,
+                },
             )
             text = response.get("response", "AI summary is unavailable")
             return LLMResult(
                 summary=text,
-                model_info=f"ollama-sdk:{self.model}",
+                model_info=f"ollama-sdk:prompt={self.prompt_version}:{self.model}",
                 evidence=self._extract_evidence(diff_text, text),
             )
         except Exception as exc:  # noqa: BLE001
             sdk_error = self._humanize_error(exc)
 
         # Fallback: HTTP API (на случай, если SDK не установлен).
-        payload = {"model": self.model, "prompt": prompt, "stream": False}
+        payload = {
+            "model": self.model,
+            "prompt": prompt,
+            "stream": False,
+            "options": {
+                "temperature": 0.2,
+                "top_p": 0.9,
+                "repeat_penalty": 1.1,
+                "num_predict": DIFF_MAX_TOKENS,
+            },
+        }
         req = request.Request(
             self.endpoint,
             data=json.dumps(payload).encode("utf-8"),
@@ -51,14 +69,14 @@ class OllamaBackend:
                 text = data.get("response", "AI summary is unavailable")
             return LLMResult(
                 summary=text,
-                model_info=f"ollama-http:{self.model}",
+                model_info=f"ollama-http:prompt={self.prompt_version}:{self.model}",
                 evidence=self._extract_evidence(diff_text, text),
             )
         except Exception as exc:  # noqa: BLE001
             http_error = self._humanize_error(exc)
             return LLMResult(
                 summary=f"AI summary unavailable: {sdk_error}; {http_error}",
-                model_info=f"ollama:{self.model}",
+                model_info=f"ollama:prompt={self.prompt_version}:{self.model}",
                 evidence=self._extract_evidence(diff_text, ""),
             )
 

@@ -68,6 +68,9 @@ class CommitReportUseCase:
         return report
 
     def _is_cache_compatible(self, cached_model_info: str) -> bool:
+        prompt_version = getattr(self.ai_backend, "prompt_version", "")
+        if prompt_version and f"prompt={prompt_version}" not in cached_model_info:
+            return False
         return cached_model_info.endswith(self.ai_backend.model)
 
     @staticmethod
